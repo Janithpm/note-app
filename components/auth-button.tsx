@@ -18,12 +18,14 @@ export function AuthButton() {
 
   if (session) {
     return (
-      <div className="flex items-center gap-4">
-        <span className="text-sm text-muted-foreground">
+      <div className="flex items-center justify-between w-full min-w-0 gap-2">
+        <span className="text-sm font-medium text-foreground truncate select-none">
           {session.user.name}
         </span>
         <Button 
-          variant="outline" 
+          variant="ghost" 
+          size="icon"
+          title="Sign Out"
           onClick={() => signOut({
             fetchOptions: {
               onSuccess: () => {
@@ -31,9 +33,9 @@ export function AuthButton() {
               }
             }
           })}
+          className="shrink-0 text-muted-foreground hover:text-destructive h-8 w-8"
         >
-          <LogOut className="mr-2 h-4 w-4" />
-          Sign Out
+          <LogOut className="h-4 w-4" />
         </Button>
       </div>
     );
