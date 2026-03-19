@@ -2,6 +2,7 @@ import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 import { getRepositoryContents } from "@/lib/github";
 import { FileTree } from "@/components/file-tree";
+import { SearchPalette } from "@/components/search-palette";
 
 export default async function RepositoryLayout({
   children,
@@ -26,6 +27,7 @@ export default async function RepositoryLayout({
 
   return (
     <>
+      <SearchPalette />
       <FileTree owner={owner} repo={name} initialData={initialData} />
       <div className="flex-1 overflow-y-auto min-w-0 h-full relative">
         {children}

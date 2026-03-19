@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { Folder, File, ChevronRight, ChevronDown, FileText, Plus } from "lucide-react";
+import { useState, useCallback } from "react";
+import { Folder, File, ChevronRight, ChevronDown, FileText, Plus, Search } from "lucide-react";
 import Link from "next/link";
 import { fetchRepoContents } from "@/app/dashboard/[owner]/[name]/actions";
 import { AuthButton } from "@/components/auth-button";
@@ -78,16 +78,25 @@ export function FileTree({ owner, repo, initialData, currentPath }: any) {
     <div className="flex flex-col border-r bg-muted/10 w-64 md:w-72 h-full hidden md:flex shrink-0">
       <div className="p-4 flex-1 overflow-y-auto">
         <div className="flex items-center justify-between px-2 pb-3 mb-2 border-b">
-          <span className="font-semibold text-sm truncate uppercase tracking-wider text-muted-foreground">
+          <span className="font-semibold text-sm truncate uppercase tracking-wider text-muted-foreground mr-2">
             {owner}/{repo}
           </span>
-          <Link 
-            href={`/dashboard/${owner}/${repo}/new`} 
-            className="p-1.5 hover:bg-muted-foreground/20 rounded-md text-foreground transition-colors"
-            title="New Note"
-          >
-            <Plus className="h-4 w-4" />
-          </Link>
+          <div className="flex items-center gap-0.5">
+            <button 
+              onClick={() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true }))}
+              className="p-1.5 hover:bg-muted-foreground/20 rounded-md text-foreground transition-colors"
+              title="Search Workspace (⌘K)"
+            >
+              <Search className="h-4 w-4" />
+            </button>
+            <Link 
+              href={`/dashboard/${owner}/${repo}/new`} 
+              className="p-1.5 hover:bg-muted-foreground/20 rounded-md text-foreground transition-colors"
+              title="New Note"
+            >
+              <Plus className="h-4 w-4" />
+            </Link>
+          </div>
         </div>
         <div className="flex flex-col gap-0.5">
           {initialData.sort((a: any, b: any) => {
