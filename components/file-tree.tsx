@@ -46,6 +46,10 @@ type RepoItem = {
   type: "dir" | "file" | string;
 };
 
+function getRepoItemKey(item: RepoItem) {
+  return `${item.type}:${item.path || item.sha}`;
+}
+
 function sortRepoItems(items: RepoItem[]) {
   return [...items].sort((a, b) => {
     if (a.type === "dir" && b.type !== "dir") return -1;
@@ -196,7 +200,7 @@ function FolderNode({
               ) : (
                 children.map((child) => (
                   <FileNode
-                    key={child.sha}
+                    key={getRepoItemKey(child)}
                     owner={owner}
                     repo={repo}
                     item={child}
@@ -243,7 +247,7 @@ function FolderNode({
             ) : (
               children.map((child) => (
                 <FileNode
-                  key={child.sha}
+                  key={getRepoItemKey(child)}
                   owner={owner}
                   repo={repo}
                   item={child}
@@ -353,7 +357,7 @@ export function FileTree({
             <SidebarMenu>
               {items.map((item) => (
                 <FileNode
-                  key={item.sha}
+                  key={getRepoItemKey(item)}
                   owner={owner}
                   repo={repo}
                   item={item}
