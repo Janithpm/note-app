@@ -1,5 +1,6 @@
 "use client";
 
+import type { CSSProperties } from "react";
 import { useState, useTransition, useMemo, useEffect, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -7,13 +8,65 @@ import rehypeSlug from "rehype-slug";
 import GithubSlugger from "github-slugger";
 import { Button } from "./ui/button";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "./ui/resizable";
-import { Save, Loader2, Edit3, X, List, Mic, MicOff } from "lucide-react";
-import { saveNoteAction } from "@/app/dashboard/[owner]/[name]/blob/[...path]/actions";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarSeparator,
+} from "./ui/sidebar";
+import { Save, Loader2, Edit3, X, List, Mic } from "lucide-react";
+import { saveNoteAction } from "@/app/workspace/[owner]/[name]/blob/[...path]/actions";
 import { useRouter } from "next/navigation";
+
+type TocHeading = {
+  id: string;
+  text: string;
+  depth: number;
+};
+
+type SpeechRecognitionResultLike = {
+  isFinal: boolean;
+  0: {
+    transcript: string;
+  };
+};
+
+type SpeechRecognitionEventLike = {
+  resultIndex: number;
+  results: ArrayLike<SpeechRecognitionResultLike>;
+};
+
+type SpeechRecognitionLike = {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
+  onerror: ((event: { error: string }) => void) | null;
+  onend: (() => void) | null;
+  start: () => void;
+  stop: () => void;
+};
+
+type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
+
+type MarkdownEditorProps = {
+  initialContent: string;
+  sha?: string;
+  owner: string;
+  repo: string;
+  path?: string;
+  isNew?: boolean;
+};
 
 function extractTOC(content: string) {
   const slugger = new GithubSlugger();
-  const headings: { id: string; text: string; depth: number }[] = [];
+  const headings: TocHeading[] = [];
   const lines = content.split('\n');
   
   const headingRegex = /^(#{1,3})\s+(.+)$/;
@@ -67,7 +120,14 @@ function processDictation(text: string) {
   return processed;
 }
 
-export function MarkdownEditor({ initialContent, sha, owner, repo, path, isNew = false }: any) {
+export function MarkdownEditor({
+  initialContent,
+  sha,
+  owner,
+  repo,
+  path = "",
+  isNew = false,
+}: MarkdownEditorProps) {
   const router = useRouter();
   const [mode, setMode] = useState<'read' | 'edit'>(isNew ? 'edit' : 'read');
   const [content, setContent] = useState(initialContent);
@@ -77,20 +137,26 @@ export function MarkdownEditor({ initialContent, sha, owner, repo, path, isNew =
 
   const [isListening, setIsListening] = useState(false);
   const [interimTranscript, setInterimTranscript] = useState('');
-  const recognitionRef = useRef<any>(null);
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const ignoreNextFinalRef = useRef(false);
 
   useEffect(() => {
-    let recognition: any = null;
+    let recognition: SpeechRecognitionLike | null = null;
     if (typeof window !== "undefined") {
-      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      const speechRecognitionWindow = window as Window & {
+        SpeechRecognition?: SpeechRecognitionConstructor;
+        webkitSpeechRecognition?: SpeechRecognitionConstructor;
+      };
+      const SpeechRecognition =
+        speechRecognitionWindow.SpeechRecognition ||
+        speechRecognitionWindow.webkitSpeechRecognition;
       if (SpeechRecognition) {
         recognition = new SpeechRecognition();
         recognition.continuous = true;
         recognition.interimResults = true; // Turn back on for real-time magic
         recognition.lang = 'en-US';
 
-        recognition.onresult = (event: any) => {
+        recognition.onresult = (event: SpeechRecognitionEventLike) => {
           let currentFinal = '';
           let currentInterim = '';
           
@@ -109,7 +175,7 @@ export function MarkdownEditor({ initialContent, sha, owner, repo, path, isNew =
             if (ignoreNextFinalRef.current) {
               ignoreNextFinalRef.current = false;
             } else {
-              setContent((prev: string) => {
+              setContent((prev) => {
                 const needsSpace = prev.length > 0 && !prev.endsWith(' ') && !prev.endsWith('\n');
                 return prev + (needsSpace ? ' ' : '') + processedFinal.trim();
               });
@@ -119,7 +185,7 @@ export function MarkdownEditor({ initialContent, sha, owner, repo, path, isNew =
           setInterimTranscript(processedInterim);
         };
 
-        recognition.onerror = (event: any) => {
+        recognition.onerror = (event) => {
           console.error("Speech recognition error:", event.error);
           setIsListening(false);
           setInterimTranscript('');
@@ -138,7 +204,7 @@ export function MarkdownEditor({ initialContent, sha, owner, repo, path, isNew =
       if (recognition) {
         try {
           recognition.stop();
-        } catch (e) {}
+        } catch {}
       }
     };
   }, []);
@@ -171,7 +237,7 @@ export function MarkdownEditor({ initialContent, sha, owner, repo, path, isNew =
         setIsSaved(true);
         setTimeout(() => setIsSaved(false), 3000);
         if (isNew) {
-           router.push(`/dashboard/${owner}/${repo}/blob/${filePath}`);
+           router.push(`/workspace/${owner}/${repo}/blob/${filePath}`);
         } else {
            setMode('read');
         }
@@ -191,53 +257,88 @@ export function MarkdownEditor({ initialContent, sha, owner, repo, path, isNew =
 
   if (mode === 'read') {
     return (
-      <div className="flex h-full w-full bg-background overflow-hidden relative">
-        <div className="flex-1 overflow-y-auto px-8 py-10 flex justify-center">
-          <div className="max-w-5xl w-full flex gap-12">
-             <div className="flex-1 min-w-0 prose prose-sm md:prose-base dark:prose-invert prose-headings:text-foreground prose-a:text-primary">
-               <div className="flex items-center justify-between mb-8 pb-4 border-b not-prose">
-                 <div>
-                   <h1 className="text-3xl font-bold tracking-tight text-foreground">{path.split('/').pop()}</h1>
-                   <div className="text-sm text-muted-foreground mt-1 tracking-wide">{path}</div>
-                 </div>
-                 <Button onClick={() => setMode('edit')} variant="outline" size="sm" className="hidden sm:flex">
-                   <Edit3 className="mr-2 h-4 w-4" /> Edit Note
-                 </Button>
-               </div>
-               <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSlug]}>
-                 {content}
-               </ReactMarkdown>
-             </div>
-             
-             {/* TOC Sidebar */}
-             <div className="hidden lg:block w-56 shrink-0 not-prose">
-               <div className="sticky top-10 flex flex-col gap-4 border-l pl-4 border-border max-h-[80vh] overflow-y-auto scrollbar-none">
-                 <h3 className="font-semibold text-xs flex items-center gap-2 text-muted-foreground uppercase tracking-wider">
-                   <List className="h-3 w-3" /> On this page
-                 </h3>
-                 <ul className="flex flex-col gap-2.5 text-sm">
-                   {toc.map((heading, i) => (
-                     <li key={i} style={{ paddingLeft: `${(heading.depth - 1) * 0.75}rem` }}>
-                       <a href={`#${heading.id}`} className="text-muted-foreground hover:text-foreground transition-colors line-clamp-2">
-                         {heading.text}
-                       </a>
-                     </li>
-                   ))}
-                   {toc.length === 0 && (
-                     <li className="text-muted-foreground/60 italic text-xs">No headings found.</li>
-                   )}
-                 </ul>
-               </div>
-             </div>
+      <div className="flex h-full min-h-0 w-full overflow-hidden bg-background">
+        <div className="flex-1 overflow-y-auto px-6 py-8 md:px-8 md:py-10">
+          <div className="mx-auto flex w-full max-w-5xl flex-col">
+            <div className="mb-8 flex items-center justify-between gap-4 border-b pb-4">
+              <div className="min-w-0">
+                <h1 className="truncate text-3xl font-bold tracking-tight text-foreground">
+                  {path.split('/').pop()}
+                </h1>
+                <div className="mt-1 truncate text-sm tracking-wide text-muted-foreground">
+                  {path}
+                </div>
+              </div>
+              <Button onClick={() => setMode('edit')} variant="outline" size="sm" className="hidden sm:flex">
+                <Edit3 className="mr-2 h-4 w-4" /> Edit Note
+              </Button>
+            </div>
+            <div className="prose prose-sm max-w-none text-foreground prose-a:text-primary prose-headings:text-foreground md:prose-base dark:prose-invert">
+              <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSlug]}>
+                {content}
+              </ReactMarkdown>
+            </div>
           </div>
         </div>
+
+        <Sidebar
+          side="right"
+          collapsible="none"
+          className="hidden xl:flex border-l border-sidebar-border/70 bg-sidebar/55"
+          style={{ "--sidebar-width": "18rem" } as CSSProperties}
+        >
+          <SidebarHeader className="gap-1 p-4">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-sidebar-foreground/55">
+              Navigation
+            </p>
+            <div className="flex items-center gap-2 text-sm font-semibold text-sidebar-foreground">
+              <List className="h-4 w-4" />
+              <span>On this page</span>
+            </div>
+          </SidebarHeader>
+          <SidebarSeparator />
+          <SidebarContent>
+            <SidebarGroup className="pt-2">
+              <SidebarGroupLabel>Headings</SidebarGroupLabel>
+              <SidebarGroupContent>
+                <SidebarMenu>
+                  {toc.map((heading) => (
+                    <SidebarMenuItem key={heading.id}>
+                      <SidebarMenuButton
+                        asChild
+                        tooltip={heading.text}
+                        className="h-auto py-2"
+                      >
+                        <a
+                          href={`#${heading.id}`}
+                          style={{
+                            paddingLeft: `${(heading.depth - 1) * 0.75 + 0.5}rem`,
+                          }}
+                        >
+                          <span className="line-clamp-2">{heading.text}</span>
+                        </a>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  ))}
+                  {toc.length === 0 && (
+                    <SidebarMenuItem>
+                      <div className="rounded-md border border-dashed border-sidebar-border/70 px-3 py-4 text-xs leading-relaxed text-sidebar-foreground/60">
+                        No headings found. Add markdown headings to populate the table of contents.
+                      </div>
+                    </SidebarMenuItem>
+                  )}
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
+          </SidebarContent>
+        </Sidebar>
       </div>
     );
   }
 
   // Edit Mode
   return (
-    <div className="flex flex-col h-full w-full">
+    <div className="flex h-full min-h-0 w-full flex-col">
       <div className="flex items-center justify-between border-b px-4 py-2 bg-muted/20">
         <div className="flex items-center gap-2 flex-1 mr-4 min-w-0">
           {!isNew && (
@@ -296,7 +397,7 @@ export function MarkdownEditor({ initialContent, sha, owner, repo, path, isNew =
                 // User interrupted dictation by typing manually
                 ignoreNextFinalRef.current = true;
                 if (recognitionRef.current) {
-                  try { recognitionRef.current.stop(); } catch(e){}
+                  try { recognitionRef.current.stop(); } catch {}
                 }
                 setIsListening(false);
                 setInterimTranscript('');

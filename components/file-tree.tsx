@@ -1,129 +1,392 @@
 "use client";
 
-import { useState, useCallback } from "react";
-import { Folder, File, ChevronRight, ChevronDown, FileText, Plus, Search } from "lucide-react";
+import * as React from "react";
 import Link from "next/link";
-import { fetchRepoContents } from "@/app/dashboard/[owner]/[name]/actions";
+import { usePathname } from "next/navigation";
+import {
+  ChevronRight,
+  File,
+  FileText,
+  Folder,
+  Plus,
+  Search,
+} from "lucide-react";
+
+import { fetchRepoContents } from "@/app/workspace/[owner]/[name]/actions";
 import { AuthButton } from "@/components/auth-button";
 import { FullscreenToggle } from "@/components/fullscreen-toggle";
+import { Button } from "@/components/ui/button";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarMenuSub,
+  SidebarMenuSubButton,
+  SidebarMenuSubItem,
+  SidebarRail,
+  SidebarSeparator,
+} from "@/components/ui/sidebar";
 
-export function FileNode({ owner, repo, item, currentPath }: any) {
-  const [isOpen, setIsOpen] = useState(false);
-  const [children, setChildren] = useState<any[]>([]);
-  const [loading, setLoading] = useState(false);
+type RepoItem = {
+  name: string;
+  path: string;
+  sha: string;
+  type: "dir" | "file" | string;
+};
 
-  const isFolder = item.type === "dir";
+function sortRepoItems(items: RepoItem[]) {
+  return [...items].sort((a, b) => {
+    if (a.type === "dir" && b.type !== "dir") return -1;
+    if (a.type !== "dir" && b.type === "dir") return 1;
+    return a.name.localeCompare(b.name);
+  });
+}
 
-  const handleToggle = async () => {
-    if (!isFolder) return;
-    if (!isOpen && children.length === 0) {
-      setLoading(true);
-      try {
-        const data = await fetchRepoContents(owner, repo, item.path);
-        setChildren(data as any[]);
-      } catch (e) {
-        console.error(e);
-      }
-      setLoading(false);
-    }
-    setIsOpen(!isOpen);
-  };
+function getCurrentBlobPath(pathname: string) {
+  const [, blobPath = ""] = pathname.split("/blob/");
+  return decodeURIComponent(blobPath);
+}
 
-  if (!isFolder) {
-    const isMarkdown = item.name.endsWith(".md") || item.name.endsWith(".mdx");
+function openSearchPalette() {
+  document.dispatchEvent(
+    new KeyboardEvent("keydown", {
+      key: "k",
+      ctrlKey: true,
+      metaKey: true,
+      bubbles: true,
+    })
+  );
+}
+
+function FileLink({
+  owner,
+  repo,
+  item,
+  isActive,
+  nested = false,
+}: {
+  owner: string;
+  repo: string;
+  item: RepoItem;
+  isActive: boolean;
+  nested?: boolean;
+}) {
+  const isMarkdown = item.name.endsWith(".md") || item.name.endsWith(".mdx");
+  const href = `/workspace/${owner}/${repo}/blob/${item.path}`;
+
+  if (nested) {
     return (
-      <Link 
-        href={`/dashboard/${owner}/${repo}/blob/${item.path}`}
-        className={`flex items-center gap-2 py-1.5 px-2 text-sm hover:bg-muted/80 rounded-md cursor-pointer transition-colors ${currentPath === item.path ? 'bg-primary/10 text-primary font-medium' : 'text-muted-foreground'}`}
-      >
-        {isMarkdown ? <FileText className="h-4 w-4 text-primary/70" /> : <File className="h-4 w-4" />}
-        <span className="truncate">{item.name}</span>
-      </Link>
+      <SidebarMenuSubItem>
+        <SidebarMenuSubButton asChild isActive={isActive}>
+          <Link href={href}>
+            {isMarkdown ? (
+              <FileText className="text-primary/80" />
+            ) : (
+              <File className="text-muted-foreground" />
+            )}
+            <span>{item.name}</span>
+          </Link>
+        </SidebarMenuSubButton>
+      </SidebarMenuSubItem>
     );
   }
 
   return (
-    <div>
-      <div 
-        onClick={handleToggle}
-        className="flex items-center gap-1.5 py-1.5 px-2 text-sm hover:bg-muted/80 rounded-md cursor-pointer text-foreground/90 font-medium transition-colors"
-      >
-        {isOpen ? <ChevronDown className="h-4 w-4 text-muted-foreground" /> : <ChevronRight className="h-4 w-4 text-muted-foreground" />}
-        <Folder className="h-4 w-4 text-primary/80 fill-primary/20" />
-        <span className="truncate">{item.name}</span>
-      </div>
-      {isOpen && (
-        <div className="pl-4 ml-[9px] border-l border-border/40 mt-1 flex flex-col gap-0.5">
-          {loading ? (
-            <div className="py-1 px-2 text-xs text-muted-foreground">Loading...</div>
+    <SidebarMenuItem>
+      <SidebarMenuButton asChild isActive={isActive} tooltip={item.path}>
+        <Link href={href}>
+          {isMarkdown ? (
+            <FileText className="text-primary/80" />
           ) : (
-            children.map((child: any) => (
-              <FileNode 
-                key={child.sha} 
-                owner={owner} 
-                repo={repo} 
-                item={child} 
-                currentPath={currentPath}
-              />
-            ))
+            <File className="text-muted-foreground" />
           )}
-        </div>
-      )}
-    </div>
+          <span>{item.name}</span>
+        </Link>
+      </SidebarMenuButton>
+    </SidebarMenuItem>
   );
 }
 
-export function FileTree({ owner, repo, initialData, currentPath }: any) {
+function FolderNode({
+  owner,
+  repo,
+  item,
+  currentPath,
+  nested = false,
+}: {
+  owner: string;
+  repo: string;
+  item: RepoItem;
+  currentPath: string;
+  nested?: boolean;
+}) {
+  const shouldBeOpen =
+    currentPath === item.path || currentPath.startsWith(`${item.path}/`);
+
+  const [isOpen, setIsOpen] = React.useState(shouldBeOpen);
+  const [children, setChildren] = React.useState<RepoItem[]>([]);
+  const [loading, setLoading] = React.useState(false);
+
+  const loadChildren = React.useCallback(async () => {
+    if (loading || children.length > 0) {
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const data = await fetchRepoContents(owner, repo, item.path);
+      setChildren(sortRepoItems(data as RepoItem[]));
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setLoading(false);
+    }
+  }, [children.length, item.path, loading, owner, repo]);
+
+  React.useEffect(() => {
+    if (shouldBeOpen) {
+      setIsOpen(true);
+      void loadChildren();
+    }
+  }, [loadChildren, shouldBeOpen]);
+
+  if (nested) {
+    return (
+      <SidebarMenuSubItem>
+        <Collapsible
+          open={isOpen}
+          onOpenChange={(open) => {
+            setIsOpen(open);
+            if (open) {
+              void loadChildren();
+            }
+          }}
+        >
+          <CollapsibleTrigger asChild>
+            <SidebarMenuSubButton isActive={shouldBeOpen}>
+              <ChevronRight
+                className={`transition-transform ${
+                  isOpen ? "rotate-90" : ""
+                }`}
+              />
+              <Folder className="text-primary/80" />
+              <span>{item.name}</span>
+            </SidebarMenuSubButton>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <SidebarMenuSub>
+              {loading ? (
+                <SidebarMenuSubItem>
+                  <div className="px-2 py-1 text-xs text-muted-foreground">
+                    Loading...
+                  </div>
+                </SidebarMenuSubItem>
+              ) : (
+                children.map((child) => (
+                  <FileNode
+                    key={child.sha}
+                    owner={owner}
+                    repo={repo}
+                    item={child}
+                    currentPath={currentPath}
+                    nested
+                  />
+                ))
+              )}
+            </SidebarMenuSub>
+          </CollapsibleContent>
+        </Collapsible>
+      </SidebarMenuSubItem>
+    );
+  }
+
   return (
-    <div className="flex flex-col border-r bg-muted/10 w-64 md:w-72 h-full hidden md:flex shrink-0">
-      <div className="p-4 flex-1 overflow-y-auto">
-        <div className="flex items-center justify-between px-2 pb-3 mb-2 border-b">
-          <span className="font-semibold text-sm truncate uppercase tracking-wider text-muted-foreground mr-2">
+    <SidebarMenuItem>
+      <Collapsible
+        open={isOpen}
+        onOpenChange={(open) => {
+          setIsOpen(open);
+          if (open) {
+            void loadChildren();
+          }
+        }}
+      >
+        <CollapsibleTrigger asChild>
+          <SidebarMenuButton isActive={shouldBeOpen} tooltip={item.path}>
+            <ChevronRight
+              className={`transition-transform ${isOpen ? "rotate-90" : ""}`}
+            />
+            <Folder className="text-primary/80" />
+            <span>{item.name}</span>
+          </SidebarMenuButton>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <SidebarMenuSub>
+            {loading ? (
+              <SidebarMenuSubItem>
+                <div className="px-2 py-1 text-xs text-muted-foreground">
+                  Loading...
+                </div>
+              </SidebarMenuSubItem>
+            ) : (
+              children.map((child) => (
+                <FileNode
+                  key={child.sha}
+                  owner={owner}
+                  repo={repo}
+                  item={child}
+                  currentPath={currentPath}
+                  nested
+                />
+              ))
+            )}
+          </SidebarMenuSub>
+        </CollapsibleContent>
+      </Collapsible>
+    </SidebarMenuItem>
+  );
+}
+
+export function FileNode({
+  owner,
+  repo,
+  item,
+  currentPath,
+  nested = false,
+}: {
+  owner: string;
+  repo: string;
+  item: RepoItem;
+  currentPath: string;
+  nested?: boolean;
+}) {
+  if (item.type === "dir") {
+    return (
+      <FolderNode
+        owner={owner}
+        repo={repo}
+        item={item}
+        currentPath={currentPath}
+        nested={nested}
+      />
+    );
+  }
+
+  return (
+    <FileLink
+      owner={owner}
+      repo={repo}
+      item={item}
+      isActive={currentPath === item.path}
+      nested={nested}
+    />
+  );
+}
+
+export function FileTree({
+  owner,
+  repo,
+  initialData,
+}: {
+  owner: string;
+  repo: string;
+  initialData: RepoItem[];
+}) {
+  const pathname = usePathname();
+  const currentPath = getCurrentBlobPath(pathname);
+  const items = React.useMemo(() => sortRepoItems(initialData), [initialData]);
+
+  return (
+    <Sidebar
+      className="border-r border-sidebar-border/70"
+      style={{ "--sidebar-width": "21rem" } as React.CSSProperties}
+    >
+      <SidebarHeader className="gap-3 p-3">
+        <div className="rounded-xl border border-sidebar-border/70 bg-sidebar-accent/40 p-3">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sidebar-foreground/60">
+            Repository
+          </p>
+          <h2 className="mt-1 truncate text-sm font-semibold text-sidebar-foreground">
             {owner}/{repo}
-          </span>
-          <div className="flex items-center gap-0.5">
-            <button 
-              onClick={() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true }))}
-              className="p-1.5 hover:bg-muted-foreground/20 rounded-md text-foreground transition-colors"
-              title="Search Workspace (⌘K)"
-            >
-              <Search className="h-4 w-4" />
-            </button>
-            <Link 
-              href={`/dashboard/${owner}/${repo}/new`} 
-              className="p-1.5 hover:bg-muted-foreground/20 rounded-md text-foreground transition-colors"
-              title="New Note"
-            >
-              <Plus className="h-4 w-4" />
-            </Link>
+          </h2>
+          <p className="mt-1 text-xs leading-relaxed text-sidebar-foreground/70">
+            Browse docs, open markdown files, and jump back into editing quickly.
+          </p>
+        </div>
+
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton onClick={openSearchPalette}>
+              <Search />
+              <span>Search workspace</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton asChild isActive={pathname.endsWith("/new")}>
+              <Link href={`/workspace/${owner}/${repo}/new`}>
+                <Plus />
+                <span>New note</span>
+              </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarHeader>
+
+      <SidebarSeparator />
+
+      <SidebarContent>
+        <SidebarGroup className="pt-2">
+          <SidebarGroupLabel>Workspace Tree</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {items.map((item) => (
+                <FileNode
+                  key={item.sha}
+                  owner={owner}
+                  repo={repo}
+                  item={item}
+                  currentPath={currentPath}
+                />
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+      </SidebarContent>
+
+      <SidebarSeparator />
+
+      <SidebarFooter className="p-3">
+        <div className="flex items-center gap-2 rounded-xl border border-sidebar-border/70 bg-sidebar-accent/30 p-2">
+          <FullscreenToggle />
+          <div className="h-5 w-px shrink-0 bg-sidebar-border/70" />
+          <div className="min-w-0 flex-1">
+            <AuthButton />
           </div>
         </div>
-        <div className="flex flex-col gap-0.5">
-          {initialData.sort((a: any, b: any) => {
-            // Sort folders first
-            if (a.type === "dir" && b.type !== "dir") return -1;
-            if (a.type !== "dir" && b.type === "dir") return 1;
-            return a.name.localeCompare(b.name);
-          }).map((item: any) => (
-            <FileNode 
-              key={item.sha} 
-              owner={owner} 
-              repo={repo} 
-              item={item} 
-              currentPath={currentPath}
-            />
-          ))}
-        </div>
-      </div>
-      
-      {/* Sidebar Footer */}
-      <div className="p-3 border-t bg-muted/5 flex items-center gap-1.5">
-        <FullscreenToggle />
-        <div className="w-[1px] h-4 bg-border/40 mx-1 shrink-0"></div>
-        <div className="flex-1 min-w-0 pr-1">
-          <AuthButton />
-        </div>
-      </div>
-    </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="justify-start text-sidebar-foreground/70 hover:text-sidebar-foreground"
+          onClick={openSearchPalette}
+        >
+          <Search />
+          <span>Press cmd/ctrl + K to search</span>
+        </Button>
+      </SidebarFooter>
+
+      <SidebarRail />
+    </Sidebar>
   );
 }

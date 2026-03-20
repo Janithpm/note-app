@@ -8,7 +8,7 @@ export default async function NewFilePage({
   const { owner, name } = await params;
   
   return (
-    <div className="h-[calc(100vh-3.5rem)] flex flex-col">
+    <div className="flex h-full min-h-0 flex-col">
       <MarkdownEditor 
         initialContent="# New Note\n\nStart typing here..." 
         owner={owner}

@@ -1,11 +1,21 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Maximize, Minimize } from "lucide-react";
 import { Button } from "./ui/button";
 
 export function FullscreenToggle() {
   const [isFullscreen, setIsFullscreen] = useState(false);
+
+  const toggleFullscreen = useCallback(() => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch((err) => {
+        console.error(`Error attempting to enable fullscreen: ${err.message}`);
+      });
+    } else if (document.exitFullscreen) {
+      document.exitFullscreen();
+    }
+  }, []);
 
   useEffect(() => {
     const onFullscreenChange = () => {
@@ -32,19 +42,7 @@ export function FullscreenToggle() {
       document.removeEventListener("fullscreenchange", onFullscreenChange);
       document.removeEventListener("keydown", onKeyDown);
     };
-  }, []);
-
-  const toggleFullscreen = () => {
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen().catch((err) => {
-        console.error(`Error attempting to enable fullscreen: ${err.message}`);
-      });
-    } else {
-      if (document.exitFullscreen) {
-        document.exitFullscreen();
-      }
-    }
-  };
+  }, [toggleFullscreen]);
 
   return (
     <Button 

@@ -20,7 +20,7 @@ export default async function BlobPage({
   let fileData = null;
   try {
     fileData = await getFileContent(session.user.id, owner, name, filePath);
-  } catch (error) {
+  } catch {
     return (
       <div className="flex h-full items-center justify-center p-6 text-center">
         <div className="max-w-md space-y-4">
@@ -32,7 +32,7 @@ export default async function BlobPage({
   }
 
   return (
-    <div className="h-[calc(100vh-3.5rem)] flex flex-col">
+    <div className="flex h-full min-h-0 flex-col">
       <MarkdownEditor 
         initialContent={fileData.content} 
         sha={fileData.sha}

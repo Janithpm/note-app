@@ -3,6 +3,12 @@ import { account } from "./db/schema";
 import { eq, and } from "drizzle-orm";
 import { Octokit } from "@octokit/rest";
 
+type GitHubFileContent = {
+  type: string;
+  content?: string;
+  sha: string;
+};
+
 /**
  * Helper to fetch the authenticated Octokit instance for a user
  */
@@ -61,7 +67,7 @@ export async function getFileContent(
     path,
   });
   
-  const data = response.data as any;
+  const data = response.data as GitHubFileContent;
   if (data.type !== "file" || !data.content) {
     throw new Error("Not a valid file or missing content");
   }
@@ -107,8 +113,13 @@ export async function getOrCreateWorkspaceRepo(userId: string) {
       repo: repoName,
     });
     return repo;
-  } catch (error: any) {
-    if (error.status === 404) {
+  } catch (error: unknown) {
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "status" in error &&
+      error.status === 404
+    ) {
       // Create a private repo with an initial commit to avoid empty repo errors
       const { data: repo } = await octokit.rest.repos.createForAuthenticatedUser({
         name: repoName,

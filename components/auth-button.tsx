@@ -43,7 +43,7 @@ export function AuthButton() {
 
   return (
     <Button 
-      onClick={() => signIn.social({ provider: "github", callbackURL: "/dashboard" })}
+      onClick={() => signIn.social({ provider: "github", callbackURL: "/workspace" })}
     >
       <LogIn className="mr-2 h-4 w-4" />
       Sign In with GitHub
