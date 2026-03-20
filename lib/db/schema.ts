@@ -6,6 +6,8 @@ export const user = pgTable("user", {
 					email: text("email").notNull().unique(),
 					emailVerified: boolean("email_verified").notNull(),
 					image: text("image"),
+					workspacePersistenceMode: text("workspace_persistence_mode").notNull().default("cookie"),
+					workspaceLastActiveOwner: text("workspace_last_active_owner"),
 					createdAt: timestamp("created_at").notNull(),
 					updatedAt: timestamp("updated_at").notNull()
 			});

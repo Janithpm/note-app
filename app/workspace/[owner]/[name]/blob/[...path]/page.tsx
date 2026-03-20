@@ -1,45 +1,44 @@
-import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
-import { getFileContent } from "@/lib/github";
-import { MarkdownEditor } from "@/components/markdown-editor";
+import { notFound, redirect } from "next/navigation";
 
-export default async function BlobPage({
-  params
+import { auth } from "@/lib/auth";
+import { getWorkspaceOwners } from "@/lib/github";
+import { getWorkspaceBlobPath, WORKSPACE_REPO_NAME } from "@/lib/workspace";
+
+export const metadata = {
+  title: "Workspace File Redirect",
+  description: "Redirects legacy workspace file URLs to the canonical route.",
+};
+
+export default async function LegacyBlobPage({
+  params,
 }: {
-  params: Promise<{ owner: string; name: string; path: string[] }>
+  params: Promise<{ owner: string; name: string; path: string[] }>;
 }) {
-  const { owner, name, path } = await params;
-  const filePath = path.join("/");
-  
   const session = await auth.api.getSession({
     headers: await headers(),
   });
 
   if (!session) return null;
 
-  let fileData = null;
-  try {
-    fileData = await getFileContent(session.user.id, owner, name, filePath);
-  } catch {
-    return (
-      <div className="flex h-full items-center justify-center p-6 text-center">
-        <div className="max-w-md space-y-4">
-          <h2 className="text-xl font-semibold text-destructive">Error loading file</h2>
-          <p className="text-muted-foreground">The file might be too large, not a text file, or no longer exists.</p>
-        </div>
-      </div>
-    );
+  const { owner, name, path } = await params;
+  if (name !== WORKSPACE_REPO_NAME) {
+    notFound();
   }
 
-  return (
-    <div className="flex h-full min-h-0 flex-col">
-      <MarkdownEditor 
-        initialContent={fileData.content} 
-        sha={fileData.sha}
-        owner={owner}
-        repo={name}
-        path={filePath}
-      />
-    </div>
+  const workspaceOwners = await getWorkspaceOwners(session.user.id);
+  if (workspaceOwners.profileOwner.login.toLowerCase() === owner.toLowerCase()) {
+    redirect(getWorkspaceBlobPath(null, path.join("/")));
+  }
+
+  const organization = workspaceOwners.owners.find(
+    (workspaceOwner) =>
+      workspaceOwner.routeSegment?.toLowerCase() === owner.toLowerCase()
   );
+
+  if (!organization) {
+    notFound();
+  }
+
+  redirect(getWorkspaceBlobPath(organization.routeSegment, path.join("/")));
 }

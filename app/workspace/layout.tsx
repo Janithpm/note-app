@@ -1,23 +1,18 @@
-import { auth } from "@/lib/auth";
-import { headers } from "next/headers";
-import { redirect } from "next/navigation";
+import { WorkspaceTransitionProvider } from "@/components/workspace-transition-provider";
+import { requireWorkspaceSession } from "@/lib/workspace-session";
 
 export default async function DashboardLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const session = await auth.api.getSession({
-    headers: await headers(),
-  });
-
-  if (!session) {
-    redirect("/");
-  }
+  await requireWorkspaceSession();
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-background">
-      {children}
+      <WorkspaceTransitionProvider>
+        {children}
+        </WorkspaceTransitionProvider>
     </div>
   );
 }

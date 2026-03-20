@@ -21,7 +21,9 @@ import {
   SidebarSeparator,
 } from "./ui/sidebar";
 import { Save, Loader2, Edit3, X, List, Mic } from "lucide-react";
-import { saveNoteAction } from "@/app/workspace/[owner]/[name]/blob/[...path]/actions";
+import { toast } from "sonner";
+import { saveNoteAction } from "@/app/workspace/actions";
+import { getWorkspaceBlobPath } from "@/lib/workspace";
 import { useRouter } from "next/navigation";
 
 type TocHeading = {
@@ -58,8 +60,7 @@ type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
 type MarkdownEditorProps = {
   initialContent: string;
   sha?: string;
-  owner: string;
-  repo: string;
+  routeOwner: string | null;
   path?: string;
   isNew?: boolean;
 };
@@ -123,8 +124,7 @@ function processDictation(text: string) {
 export function MarkdownEditor({
   initialContent,
   sha,
-  owner,
-  repo,
+  routeOwner,
   path = "",
   isNew = false,
 }: MarkdownEditorProps) {
@@ -230,20 +230,27 @@ export function MarkdownEditor({
     startTransition(async () => {
       try {
         if (isNew && !filePath.trim()) {
-           alert("Please enter a file path, e.g., 'docs/architecture.md'");
+           toast.error("Please enter a file path, for example `docs/architecture.md`.");
            return;
         }
-        await saveNoteAction(owner, repo, filePath, content, sha, isNew ? `Create ${filePath}` : `Update ${filePath}`);
+        await saveNoteAction(
+          routeOwner,
+          filePath,
+          content,
+          sha,
+          isNew ? `Create ${filePath}` : `Update ${filePath}`
+        );
         setIsSaved(true);
         setTimeout(() => setIsSaved(false), 3000);
+        toast.success(isNew ? "New note saved to GitHub." : "Changes saved to GitHub.");
         if (isNew) {
-           router.push(`/workspace/${owner}/${repo}/blob/${filePath}`);
+           router.push(getWorkspaceBlobPath(routeOwner, filePath));
         } else {
            setMode('read');
         }
       } catch (error) {
         console.error(error);
-        alert("Failed to save. Make sure your GitHub token has repo access scopes.");
+        toast.error("Failed to save. Make sure your GitHub token has the required access scopes.");
       }
     });
   };

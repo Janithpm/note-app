@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Plus, Search } from "lucide-react";
+import { Plus, Search, Settings2 } from "lucide-react";
 
 import {
   Breadcrumb,
@@ -15,6 +15,13 @@ import {
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { SidebarTrigger } from "@/components/ui/sidebar";
+import { WorkspaceSwitcher } from "@/components/workspace-switcher";
+import {
+  getWorkspaceBasePath,
+  getWorkspaceNewPath,
+  getWorkspaceSettingsPath,
+  type WorkspaceOwnerOption,
+} from "@/lib/workspace";
 
 function openSearchPalette() {
   document.dispatchEvent(
@@ -27,65 +34,81 @@ function openSearchPalette() {
   );
 }
 
-function getBreadcrumbData(pathname: string, owner: string, repo: string) {
+function getBreadcrumbData(
+  pathname: string,
+  activeOwner: WorkspaceOwnerOption,
+  routeOwner: string | null
+) {
   const segments = pathname.split("/").filter(Boolean);
-  const route = segments.slice(3);
-  const repoHref = `/workspace/${owner}/${repo}`;
+  const route = segments.slice(routeOwner ? 2 : 1);
+  const workspaceHref = getWorkspaceBasePath(routeOwner);
 
   if (route.length === 0) {
     return {
-      repoHref,
-      parentLabel: owner,
-      pageLabel: repo,
+      workspaceHref,
+      contextLabel: activeOwner.kind === "organization" ? activeOwner.label : null,
+      pageLabel: "Overview",
+    };
+  }
+
+  if (route[0] === "settings") {
+    return {
+      workspaceHref,
+      contextLabel: activeOwner.kind === "organization" ? activeOwner.label : null,
+      pageLabel: "Settings",
     };
   }
 
   if (route[0] === "new") {
     return {
-      repoHref,
-      parentLabel: repo,
+      workspaceHref,
+      contextLabel: activeOwner.kind === "organization" ? activeOwner.label : null,
       pageLabel: "New note",
     };
   }
 
   if (route[0] === "blob") {
     const pathSegments = route.slice(1).map(decodeURIComponent);
-    const pageLabel = pathSegments[pathSegments.length - 1] ?? repo;
-    const parentLabel =
+    const pageLabel = pathSegments[pathSegments.length - 1] ?? "Workspace";
+    const contextLabel =
       pathSegments.length > 1
         ? pathSegments.slice(0, -1).join(" / ")
-        : repo;
+        : activeOwner.kind === "organization"
+          ? activeOwner.label
+          : "Workspace";
 
     return {
-      repoHref,
-      parentLabel,
+      workspaceHref,
+      contextLabel,
       pageLabel,
     };
   }
 
   return {
-    repoHref,
-    parentLabel: repo,
+    workspaceHref,
+    contextLabel: activeOwner.kind === "organization" ? activeOwner.label : null,
     pageLabel: route.map(decodeURIComponent).join(" / "),
   };
 }
 
 export function RepositoryHeader({
-  owner,
-  repo,
+  activeOwner,
+  owners,
+  routeOwner,
 }: {
-  owner: string;
-  repo: string;
+  activeOwner: WorkspaceOwnerOption;
+  owners: WorkspaceOwnerOption[];
+  routeOwner: string | null;
 }) {
   const pathname = usePathname();
-  const { repoHref, parentLabel, pageLabel } = getBreadcrumbData(
+  const { workspaceHref, contextLabel, pageLabel } = getBreadcrumbData(
     pathname,
-    owner,
-    repo
+    activeOwner,
+    routeOwner
   );
 
   return (
-    <header className="sticky top-0 z-10 flex h-14 shrink-0 items-center gap-2 border-b bg-background/95 px-3 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+    <header className="sticky top-0 z-10 flex h-14 shrink-0 items-center gap-2 border-b bg-background/95 px-3 backdrop-blur supports-backdrop-filter:bg-background/80">
       <SidebarTrigger />
       <Separator
         orientation="vertical"
@@ -96,16 +119,20 @@ export function RepositoryHeader({
         <BreadcrumbList>
           <BreadcrumbItem className="hidden md:block">
             <BreadcrumbLink asChild>
-              <Link href={repoHref}>{repo}</Link>
+              <Link href={workspaceHref}>Workspace</Link>
             </BreadcrumbLink>
           </BreadcrumbItem>
           <BreadcrumbSeparator className="hidden md:block" />
-          <BreadcrumbItem className="hidden lg:block">
-            <BreadcrumbPage className="max-w-[22rem] truncate">
-              {parentLabel}
-            </BreadcrumbPage>
-          </BreadcrumbItem>
-          <BreadcrumbSeparator className="hidden lg:block" />
+          {contextLabel ? (
+            <>
+              <BreadcrumbItem className="hidden lg:block">
+                <BreadcrumbPage className="max-w-[22rem] truncate">
+                  {contextLabel}
+                </BreadcrumbPage>
+              </BreadcrumbItem>
+              <BreadcrumbSeparator className="hidden lg:block" />
+            </>
+          ) : null}
           <BreadcrumbItem>
             <BreadcrumbPage className="max-w-[16rem] truncate">
               {pageLabel}
@@ -115,6 +142,7 @@ export function RepositoryHeader({
       </Breadcrumb>
 
       <div className="ml-auto flex items-center gap-2">
+        <WorkspaceSwitcher activeOwner={activeOwner} owners={owners} />
         <Button
           variant="ghost"
           size="icon-sm"
@@ -124,8 +152,14 @@ export function RepositoryHeader({
           <Search />
           <span className="sr-only">Search workspace</span>
         </Button>
+        <Button asChild variant="ghost" size="icon-sm" title="Workspace settings">
+          <Link href={getWorkspaceSettingsPath()}>
+            <Settings2 />
+            <span className="sr-only">Workspace settings</span>
+          </Link>
+        </Button>
         <Button asChild size="sm" className="hidden sm:inline-flex">
-          <Link href={`/workspace/${owner}/${repo}/new`}>
+          <Link href={getWorkspaceNewPath(routeOwner)}>
             <Plus />
             <span>New note</span>
           </Link>
