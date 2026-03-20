@@ -81,11 +81,12 @@ export async function WorkspaceShell({
         <FileTree
           initialData={initialData}
           routeOwner={workspace.activeOwner.routeSegment}
+          activeOwner={workspace.activeOwner}
+          owners={workspace.owners}
         />
         <SidebarInset className="min-w-0">
           <RepositoryHeader
             activeOwner={workspace.activeOwner}
-            owners={workspace.owners}
             routeOwner={workspace.activeOwner.routeSegment}
           />
           <div className="relative min-h-0 flex-1 overflow-hidden">

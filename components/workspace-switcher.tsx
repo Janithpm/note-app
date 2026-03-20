@@ -1,24 +1,19 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import {
   Building2,
-  CheckCircle2,
+  Check,
   ChevronsUpDown,
   Loader2,
-  Settings2,
-  Sparkles,
   UserRound,
 } from "lucide-react";
 import { toast } from "sonner";
 
 import { rememberWorkspaceVisitAction } from "@/app/workspace/actions";
 import { Button } from "@/components/ui/button";
-import { ButtonGroup } from "@/components/ui/button-group";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { useWorkspaceTransition } from "@/components/workspace-transition-provider";
 import {
   Sheet,
   SheetContent,
@@ -26,17 +21,17 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { useWorkspaceTransition } from "@/components/workspace-transition-provider";
 import { useIsMobile } from "@/hooks/use-mobile";
 import {
-  getWorkspaceOwnerHref,
   getWorkspaceBasePath,
-  getWorkspaceSettingsPath,
+  getWorkspaceOwnerHref,
   PERSONAL_WORKSPACE_SEGMENT,
   type WorkspaceOwnerOption,
 } from "@/lib/workspace";
 import { cn } from "@/lib/utils";
 
-function WorkspaceOwnerCard({
+function WorkspaceOptionRow({
   owner,
   active,
   pending,
@@ -55,115 +50,54 @@ function WorkspaceOwnerCard({
       onClick={() => onSelect(owner)}
       disabled={pending}
       className={cn(
-        "group block w-full rounded-3xl border p-4 text-left transition-all disabled:pointer-events-none disabled:opacity-70",
-        active
-          ? "border-primary/30 bg-primary/8 shadow-lg shadow-primary/10"
-          : "border-border/70 bg-background/80 hover:-translate-y-0.5 hover:border-primary/20 hover:bg-muted/30"
+        "flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left transition-colors disabled:pointer-events-none disabled:opacity-70",
+        active ? "bg-accent text-accent-foreground" : "hover:bg-accent/70"
       )}
     >
-      <div className="flex items-start gap-3">
-        <div
-          className={cn(
-            "flex size-11 shrink-0 items-center justify-center rounded-2xl",
-            owner.kind === "organization"
-              ? "bg-linear-to-br from-cyan-500/15 via-sky-500/10 to-transparent text-cyan-600"
-              : "bg-linear-to-br from-amber-500/15 via-orange-500/10 to-transparent text-amber-600"
-          )}
-        >
-          <Icon className="size-5" />
-        </div>
+      <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-foreground">
+        <Icon className="size-4" />
+      </div>
 
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <p className="truncate text-sm font-semibold text-foreground">
-              {owner.label}
-            </p>
-            {pending && !active ? (
-              <Loader2 className="size-3 animate-spin text-muted-foreground" />
-            ) : null}
-            {active && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">
-                <CheckCircle2 className="size-3" />
-                Active
-              </span>
-            )}
-          </div>
-          <p className="mt-1 text-xs text-muted-foreground">{owner.subtitle}</p>
-          <p className="mt-3 text-xs font-medium text-foreground/70">
-            Open workspace
-          </p>
-        </div>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium">{owner.label}</p>
+        <p className="truncate text-xs text-muted-foreground">
+          {owner.kind === "organization" ? "Organization" : "Personal"}
+        </p>
+      </div>
+
+      <div className="flex size-4 shrink-0 items-center justify-center">
+        {pending && !active ? (
+          <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
+        ) : active ? (
+          <Check className="size-4 text-foreground" />
+        ) : null}
       </div>
     </button>
   );
 }
 
-function WorkspaceSwitcherPanel({
+function WorkspaceOptionList({
   owners,
   activeOwner,
   pendingOwnerSegment,
-  onClose,
   onSelect,
 }: {
   owners: WorkspaceOwnerOption[];
   activeOwner: WorkspaceOwnerOption;
   pendingOwnerSegment: string | null;
-  onClose: () => void;
   onSelect: (owner: WorkspaceOwnerOption) => void;
 }) {
-  const orgCount = owners.filter((owner) => owner.kind === "organization").length;
-  const ActiveIcon = activeOwner.kind === "organization" ? Building2 : UserRound;
-
   return (
-    <div className="overflow-hidden rounded-[28px]">
-      <div className="border-b border-border/70 bg-linear-to-br from-primary/8 via-background to-cyan-500/8 px-5 py-5">
-        <div className="flex items-start gap-3">
-          <div className="flex size-12 items-center justify-center rounded-2xl bg-background/80 text-primary shadow-sm">
-            <ActiveIcon className="size-5" />
-          </div>
-          <div className="min-w-0 flex-1">
-            <ButtonGroup className="mb-3 bg-background/70">
-              <span className="rounded-xl px-2 py-1 text-[11px] font-medium text-muted-foreground">
-                Current
-              </span>
-              <span className="rounded-xl bg-background px-2 py-1 text-[11px] font-medium text-foreground">
-                {activeOwner.kind === "organization" ? "Organization" : "Profile"}
-              </span>
-              <span className="rounded-xl px-2 py-1 text-[11px] font-medium text-muted-foreground">
-                {orgCount} org{orgCount === 1 ? "" : "s"}
-              </span>
-            </ButtonGroup>
-            <h3 className="text-base font-semibold text-foreground">
-              {activeOwner.label}
-            </h3>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Jump between your personal notes and GitHub organizations without changing the underlying repo model.
-            </p>
-          </div>
-        </div>
-      </div>
-
-      <div className="space-y-3 p-5">
-        {owners.map((owner) => (
-          <WorkspaceOwnerCard
-            key={owner.routeSegment ?? "__personal__"}
-            owner={owner}
-            active={owner.routeSegment === activeOwner.routeSegment}
-            pending={pendingOwnerSegment === owner.routeSegment}
-            onSelect={onSelect}
-          />
-        ))}
-
-        <Button asChild variant="ghost" className="w-full justify-between rounded-2xl">
-          <Link href={getWorkspaceSettingsPath()} onClick={onClose}>
-            <span className="inline-flex items-center gap-2">
-              <Settings2 className="size-4" />
-              Workspace settings
-            </span>
-            <Sparkles className="size-4 text-primary" />
-          </Link>
-        </Button>
-      </div>
+    <div className="space-y-1 p-1.5">
+      {owners.map((owner) => (
+        <WorkspaceOptionRow
+          key={owner.routeSegment ?? "__personal__"}
+          owner={owner}
+          active={owner.routeSegment === activeOwner.routeSegment}
+          pending={pendingOwnerSegment === owner.routeSegment}
+          onSelect={onSelect}
+        />
+      ))}
     </div>
   );
 }
@@ -218,19 +152,31 @@ export function WorkspaceSwitcher({
 
   const trigger = (
     <Button
-      variant="outline"
-      className="h-auto min-w-[15rem] justify-between rounded-2xl border-border/70 bg-background/70 px-3 py-2 text-left shadow-sm backdrop-blur-sm hover:bg-background"
+      type="button"
+      variant="ghost"
+      className="h-9 w-full justify-between rounded-xl px-2.5 text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
       onClick={isMobile ? () => setOpen(true) : undefined}
     >
-      <div className="min-w-0">
-        <p className="truncate text-sm font-semibold text-foreground">
-          {activeOwner.label}
-        </p>
-        <p className="truncate text-xs text-muted-foreground">
-          {activeOwner.subtitle}
-        </p>
+      <div className="flex min-w-0 items-center gap-2.5">
+        <div className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-sidebar-accent/60 text-sidebar-foreground">
+          {activeOwner.kind === "organization" ? (
+            <Building2 className="size-3.5" />
+          ) : (
+            <UserRound className="size-3.5" />
+          )}
+        </div>
+
+        <div className="min-w-0 text-left">
+          <p className="truncate text-sm font-medium text-sidebar-foreground">
+            {activeOwner.label}
+          </p>
+          <p className="truncate text-[11px] text-sidebar-foreground/65">
+            {activeOwner.kind === "organization" ? "Organization" : "Personal"}
+          </p>
+        </div>
       </div>
-      <ChevronsUpDown className="size-4 shrink-0 text-muted-foreground" />
+
+      <ChevronsUpDown className="size-3.5 shrink-0 text-sidebar-foreground/60" />
     </Button>
   );
 
@@ -240,20 +186,17 @@ export function WorkspaceSwitcher({
         {trigger}
         <SheetContent
           side="bottom"
-          className="rounded-t-[28px] border-x-0 border-b-0 px-0 pb-6 pt-0"
+          className="gap-0 rounded-t-3xl border-x-0 border-b-0 px-0 pb-5 pt-0"
           showCloseButton={false}
         >
-          <SheetHeader className="border-b border-border/70 px-5 py-4">
+          <SheetHeader className="border-b px-4 py-4 text-left">
             <SheetTitle>Switch workspace</SheetTitle>
-            <SheetDescription>
-              Move between your profile and organization contexts.
-            </SheetDescription>
+            <SheetDescription>Choose a profile or organization.</SheetDescription>
           </SheetHeader>
-          <WorkspaceSwitcherPanel
+          <WorkspaceOptionList
             owners={owners}
             activeOwner={activeOwner}
             pendingOwnerSegment={isPending ? pendingOwnerSegment : null}
-            onClose={() => setOpen(false)}
             onSelect={handleSelect}
           />
         </SheetContent>
@@ -264,12 +207,21 @@ export function WorkspaceSwitcher({
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>{trigger}</PopoverTrigger>
-      <PopoverContent className="w-[26rem] p-0">
-        <WorkspaceSwitcherPanel
+      <PopoverContent
+        align="start"
+        side="top"
+        sideOffset={8}
+        className="w-72 rounded-2xl border-border/80 bg-background p-0 shadow-md backdrop-blur-none"
+      >
+        <div className="border-b px-3 py-2">
+          <p className="text-xs font-medium text-muted-foreground">
+            Switch workspace
+          </p>
+        </div>
+        <WorkspaceOptionList
           owners={owners}
           activeOwner={activeOwner}
           pendingOwnerSegment={isPending ? pendingOwnerSegment : null}
-          onClose={() => setOpen(false)}
           onSelect={handleSelect}
         />
       </PopoverContent>

@@ -15,7 +15,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { SidebarTrigger } from "@/components/ui/sidebar";
-import { WorkspaceSwitcher } from "@/components/workspace-switcher";
 import {
   getWorkspaceBasePath,
   getWorkspaceNewPath,
@@ -93,11 +92,9 @@ function getBreadcrumbData(
 
 export function RepositoryHeader({
   activeOwner,
-  owners,
   routeOwner,
 }: {
   activeOwner: WorkspaceOwnerOption;
-  owners: WorkspaceOwnerOption[];
   routeOwner: string | null;
 }) {
   const pathname = usePathname();
@@ -142,7 +139,6 @@ export function RepositoryHeader({
       </Breadcrumb>
 
       <div className="ml-auto flex items-center gap-2">
-        <WorkspaceSwitcher activeOwner={activeOwner} owners={owners} />
         <Button
           variant="ghost"
           size="icon-sm"

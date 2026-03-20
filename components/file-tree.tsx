@@ -38,9 +38,11 @@ import {
   SidebarRail,
   SidebarSeparator,
 } from "@/components/ui/sidebar";
+import { WorkspaceSwitcher } from "@/components/workspace-switcher";
 import {
   getWorkspaceBlobPath,
   getWorkspaceNewPath,
+  type WorkspaceOwnerOption,
 } from "@/lib/workspace";
 
 type RepoItem = {
@@ -296,9 +298,13 @@ export function FileNode({
 export function FileTree({
   initialData,
   routeOwner,
+  activeOwner,
+  owners,
 }: {
   initialData: RepoItem[];
   routeOwner: string | null;
+  activeOwner: WorkspaceOwnerOption;
+  owners: WorkspaceOwnerOption[];
 }) {
   const pathname = usePathname();
   const currentPath = getCurrentBlobPath(pathname);
@@ -350,22 +356,27 @@ export function FileTree({
       <SidebarSeparator />
 
       <SidebarFooter className="p-3">
-        <div className="flex items-center gap-2 rounded-xl border border-sidebar-border/70 bg-sidebar-accent/30 p-2">
-          <FullscreenToggle />
-          <div className="h-5 w-px shrink-0 bg-sidebar-border/70" />
-          <div className="min-w-0 flex-1">
-            <AuthButton />
+        <div className="space-y-2">
+          <WorkspaceSwitcher activeOwner={activeOwner} owners={owners} />
+
+          <div className="flex items-center gap-2 rounded-xl bg-sidebar-accent/30 p-2">
+            <FullscreenToggle />
+            <div className="h-5 w-px shrink-0 bg-sidebar-border/70" />
+            <div className="min-w-0 flex-1">
+              <AuthButton />
+            </div>
           </div>
+
+          <Button
+            variant="ghost"
+            size="sm"
+            className="justify-start text-sidebar-foreground/70 hover:text-sidebar-foreground"
+            onClick={openSearchPalette}
+          >
+            <Search />
+            <span>Press cmd/ctrl + K to search</span>
+          </Button>
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="justify-start text-sidebar-foreground/70 hover:text-sidebar-foreground"
-          onClick={openSearchPalette}
-        >
-          <Search />
-          <span>Press cmd/ctrl + K to search</span>
-        </Button>
       </SidebarFooter>
 
       <SidebarRail />
