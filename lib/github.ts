@@ -18,8 +18,8 @@ async function getOctokit(userId: string) {
     .from(account)
     .where(
       and(
-         eq(account.userId, userId),
-         eq(account.providerId, "github")
+        eq(account.userId, userId),
+        eq(account.providerId, "github")
       )
     );
 
@@ -40,9 +40,9 @@ export async function getUserRepositories(userId: string) {
 }
 
 export async function getRepositoryContents(
-  userId: string, 
-  owner: string, 
-  repo: string, 
+  userId: string,
+  owner: string,
+  repo: string,
   path: string = ""
 ) {
   const octokit = await getOctokit(userId);
@@ -55,9 +55,9 @@ export async function getRepositoryContents(
 }
 
 export async function getFileContent(
-  userId: string, 
-  owner: string, 
-  repo: string, 
+  userId: string,
+  owner: string,
+  repo: string,
   path: string
 ) {
   const octokit = await getOctokit(userId);
@@ -66,7 +66,7 @@ export async function getFileContent(
     repo,
     path,
   });
-  
+
   const data = response.data as GitHubFileContent;
   if (data.type !== "file" || !data.content) {
     throw new Error("Not a valid file or missing content");
@@ -106,7 +106,7 @@ export async function getOrCreateWorkspaceRepo(userId: string) {
   const { data: user } = await octokit.rest.users.getAuthenticated();
   const owner = user.login;
   const repoName = "note-app-workspace";
-  
+
   try {
     const { data: repo } = await octokit.rest.repos.get({
       owner,
@@ -125,10 +125,19 @@ export async function getOrCreateWorkspaceRepo(userId: string) {
         name: repoName,
         description: "Architecture workspace for note-app",
         private: true,
-        auto_init: true, 
+        auto_init: true,
       });
       return repo;
     }
     throw error;
   }
+}
+
+export async function getWorkspaceRepoRef(userId: string) {
+  const repo = await getOrCreateWorkspaceRepo(userId);
+
+  return {
+    owner: repo.owner.login,
+    repo: repo.name,
+  };
 }

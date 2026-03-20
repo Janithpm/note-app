@@ -21,7 +21,7 @@ import {
   SidebarSeparator,
 } from "./ui/sidebar";
 import { Save, Loader2, Edit3, X, List, Mic } from "lucide-react";
-import { saveNoteAction } from "@/app/workspace/[owner]/[name]/blob/[...path]/actions";
+import { saveNoteAction } from "@/app/workspace/actions";
 import { useRouter } from "next/navigation";
 
 type TocHeading = {
@@ -58,8 +58,6 @@ type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
 type MarkdownEditorProps = {
   initialContent: string;
   sha?: string;
-  owner: string;
-  repo: string;
   path?: string;
   isNew?: boolean;
 };
@@ -123,8 +121,6 @@ function processDictation(text: string) {
 export function MarkdownEditor({
   initialContent,
   sha,
-  owner,
-  repo,
   path = "",
   isNew = false,
 }: MarkdownEditorProps) {
@@ -233,11 +229,11 @@ export function MarkdownEditor({
            alert("Please enter a file path, e.g., 'docs/architecture.md'");
            return;
         }
-        await saveNoteAction(owner, repo, filePath, content, sha, isNew ? `Create ${filePath}` : `Update ${filePath}`);
+          await saveNoteAction(filePath, content, sha, isNew ? `Create ${filePath}` : `Update ${filePath}`);
         setIsSaved(true);
         setTimeout(() => setIsSaved(false), 3000);
         if (isNew) {
-           router.push(`/workspace/${owner}/${repo}/blob/${filePath}`);
+            router.push(`/workspace/blob/${filePath}`);
         } else {
            setMode('read');
         }

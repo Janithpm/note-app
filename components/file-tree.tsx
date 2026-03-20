@@ -12,7 +12,7 @@ import {
   Search,
 } from "lucide-react";
 
-import { fetchRepoContents } from "@/app/workspace/[owner]/[name]/actions";
+import { fetchRepoContents } from "@/app/workspace/actions";
 import { AuthButton } from "@/components/auth-button";
 import { FullscreenToggle } from "@/components/fullscreen-toggle";
 import { Button } from "@/components/ui/button";
@@ -75,20 +75,16 @@ function openSearchPalette() {
 }
 
 function FileLink({
-  owner,
-  repo,
   item,
   isActive,
   nested = false,
 }: {
-  owner: string;
-  repo: string;
   item: RepoItem;
   isActive: boolean;
   nested?: boolean;
 }) {
   const isMarkdown = item.name.endsWith(".md") || item.name.endsWith(".mdx");
-  const href = `/workspace/${owner}/${repo}/blob/${item.path}`;
+  const href = `/workspace/blob/${item.path}`;
 
   if (nested) {
     return (
@@ -124,14 +120,10 @@ function FileLink({
 }
 
 function FolderNode({
-  owner,
-  repo,
   item,
   currentPath,
   nested = false,
 }: {
-  owner: string;
-  repo: string;
   item: RepoItem;
   currentPath: string;
   nested?: boolean;
@@ -150,14 +142,14 @@ function FolderNode({
 
     setLoading(true);
     try {
-      const data = await fetchRepoContents(owner, repo, item.path);
+      const data = await fetchRepoContents(item.path);
       setChildren(sortRepoItems(data as RepoItem[]));
     } catch (error) {
       console.error(error);
     } finally {
       setLoading(false);
     }
-  }, [children.length, item.path, loading, owner, repo]);
+  }, [children.length, item.path, loading]);
 
   React.useEffect(() => {
     if (shouldBeOpen) {
@@ -201,8 +193,6 @@ function FolderNode({
                 children.map((child) => (
                   <FileNode
                     key={getRepoItemKey(child)}
-                    owner={owner}
-                    repo={repo}
                     item={child}
                     currentPath={currentPath}
                     nested
@@ -248,8 +238,6 @@ function FolderNode({
               children.map((child) => (
                 <FileNode
                   key={getRepoItemKey(child)}
-                  owner={owner}
-                  repo={repo}
                   item={child}
                   currentPath={currentPath}
                   nested
@@ -264,14 +252,10 @@ function FolderNode({
 }
 
 export function FileNode({
-  owner,
-  repo,
   item,
   currentPath,
   nested = false,
 }: {
-  owner: string;
-  repo: string;
   item: RepoItem;
   currentPath: string;
   nested?: boolean;
@@ -279,8 +263,6 @@ export function FileNode({
   if (item.type === "dir") {
     return (
       <FolderNode
-        owner={owner}
-        repo={repo}
         item={item}
         currentPath={currentPath}
         nested={nested}
@@ -290,8 +272,6 @@ export function FileNode({
 
   return (
     <FileLink
-      owner={owner}
-      repo={repo}
       item={item}
       isActive={currentPath === item.path}
       nested={nested}
@@ -300,12 +280,10 @@ export function FileNode({
 }
 
 export function FileTree({
-  owner,
-  repo,
+  repoName,
   initialData,
 }: {
-  owner: string;
-  repo: string;
+  repoName: string;
   initialData: RepoItem[];
 }) {
   const pathname = usePathname();
@@ -323,7 +301,7 @@ export function FileTree({
             Repository
           </p>
           <h2 className="mt-1 truncate text-sm font-semibold text-sidebar-foreground">
-            {owner}/{repo}
+            {repoName}
           </h2>
           <p className="mt-1 text-xs leading-relaxed text-sidebar-foreground/70">
             Browse docs, open markdown files, and jump back into editing quickly.
@@ -339,7 +317,7 @@ export function FileTree({
           </SidebarMenuItem>
           <SidebarMenuItem>
             <SidebarMenuButton asChild isActive={pathname.endsWith("/new")}>
-              <Link href={`/workspace/${owner}/${repo}/new`}>
+              <Link href="/workspace/new">
                 <Plus />
                 <span>New note</span>
               </Link>
@@ -358,8 +336,6 @@ export function FileTree({
               {items.map((item) => (
                 <FileNode
                   key={getRepoItemKey(item)}
-                  owner={owner}
-                  repo={repo}
                   item={item}
                   currentPath={currentPath}
                 />

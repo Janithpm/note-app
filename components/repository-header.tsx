@@ -27,16 +27,16 @@ function openSearchPalette() {
   );
 }
 
-function getBreadcrumbData(pathname: string, owner: string, repo: string) {
+function getBreadcrumbData(pathname: string, repo: string) {
   const segments = pathname.split("/").filter(Boolean);
-  const route = segments.slice(3);
-  const repoHref = `/workspace/${owner}/${repo}`;
+  const route = segments.slice(1);
+  const repoHref = "/workspace";
 
   if (route.length === 0) {
     return {
       repoHref,
-      parentLabel: owner,
-      pageLabel: repo,
+      parentLabel: "Workspace",
+      pageLabel: "Overview",
     };
   }
 
@@ -71,21 +71,15 @@ function getBreadcrumbData(pathname: string, owner: string, repo: string) {
 }
 
 export function RepositoryHeader({
-  owner,
   repo,
 }: {
-  owner: string;
   repo: string;
 }) {
   const pathname = usePathname();
-  const { repoHref, parentLabel, pageLabel } = getBreadcrumbData(
-    pathname,
-    owner,
-    repo
-  );
+  const { repoHref, parentLabel, pageLabel } = getBreadcrumbData(pathname, repo);
 
   return (
-    <header className="sticky top-0 z-10 flex h-14 shrink-0 items-center gap-2 border-b bg-background/95 px-3 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+    <header className="sticky top-0 z-10 flex h-14 shrink-0 items-center gap-2 border-b bg-background/95 px-3 backdrop-blur supports-backdrop-filter:bg-background/80">
       <SidebarTrigger />
       <Separator
         orientation="vertical"
@@ -101,7 +95,7 @@ export function RepositoryHeader({
           </BreadcrumbItem>
           <BreadcrumbSeparator className="hidden md:block" />
           <BreadcrumbItem className="hidden lg:block">
-            <BreadcrumbPage className="max-w-[22rem] truncate">
+            <BreadcrumbPage className="max-w-88 truncate">
               {parentLabel}
             </BreadcrumbPage>
           </BreadcrumbItem>
@@ -125,7 +119,7 @@ export function RepositoryHeader({
           <span className="sr-only">Search workspace</span>
         </Button>
         <Button asChild size="sm" className="hidden sm:inline-flex">
-          <Link href={`/workspace/${owner}/${repo}/new`}>
+          <Link href="/workspace/new">
             <Plus />
             <span>New note</span>
           </Link>
