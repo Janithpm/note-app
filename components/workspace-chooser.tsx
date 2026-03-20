@@ -7,6 +7,7 @@ import {
   ArrowRight,
   Building2,
   Loader2,
+  LogOut,
   UserRound,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -14,6 +15,7 @@ import { toast } from "sonner";
 import { rememberWorkspaceVisitAction } from "@/app/workspace/actions";
 import { Button } from "@/components/ui/button";
 import { useWorkspaceTransition } from "@/components/workspace-transition-provider";
+import { signOut } from "@/lib/auth-client";
 import {
   getWorkspaceOwnerHref,
   PERSONAL_WORKSPACE_SEGMENT,
@@ -94,6 +96,7 @@ export function WorkspaceChooser({
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
+  const [isSigningOut, startSigningOut] = useTransition();
   const { beginWorkspaceTransition } = useWorkspaceTransition();
   const [profileOwner, ...organizationOwners] = owners;
 
@@ -107,6 +110,18 @@ export function WorkspaceChooser({
         console.error(error);
         toast.error("Could not open the personal workspace. Please try again.");
       }
+    });
+  };
+
+  const handleSignOut = () => {
+    startSigningOut(() => {
+      signOut({
+        fetchOptions: {
+          onSuccess: () => {
+            window.location.href = "/";
+          },
+        },
+      });
     });
   };
 
@@ -151,6 +166,23 @@ export function WorkspaceChooser({
                 ))}
               </div>
             ) : null}
+
+            <div className="flex justify-center pt-2">
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={handleSignOut}
+                disabled={isSigningOut}
+                className="gap-2 text-muted-foreground"
+              >
+                {isSigningOut ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <LogOut className="size-4" />
+                )}
+                <span>Log out</span>
+              </Button>
+            </div>
           </div>
         </div>
       </div>

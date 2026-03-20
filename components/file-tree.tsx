@@ -4,14 +4,12 @@ import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  Building2,
   ChevronRight,
   File,
   FileText,
   Folder,
   Plus,
   Search,
-  UserRound,
 } from "lucide-react";
 
 import { fetchRepoContents } from "@/app/workspace/actions";
@@ -43,7 +41,6 @@ import {
 import {
   getWorkspaceBlobPath,
   getWorkspaceNewPath,
-  type WorkspaceOwnerOption,
 } from "@/lib/workspace";
 
 type RepoItem = {
