@@ -241,6 +241,199 @@ export async function saveFileContent(
   return response.data;
 }
 
+export async function deleteFileContent(
+  userId: string,
+  owner: string,
+  repo: string,
+  path: string,
+  message: string,
+  sha: string
+) {
+  const octokit = await getOctokit(userId);
+  const response = await octokit.rest.repos.deleteFile({
+    owner,
+    repo,
+    path,
+    message,
+    sha,
+  });
+  return response.data;
+}
+
+export async function renameFileContent(
+  userId: string,
+  owner: string,
+  repo: string,
+  oldPath: string,
+  newPath: string,
+  message: string,
+  sha: string
+) {
+  const fileData = await getFileContent(userId, owner, repo, oldPath);
+  await saveFileContent(userId, owner, repo, newPath, fileData.content, message);
+  return deleteFileContent(userId, owner, repo, oldPath, message, sha);
+}
+
+export async function renameDirectory(
+  userId: string,
+  owner: string,
+  repo: string,
+  oldPath: string,
+  newPath: string,
+  message: string
+) {
+  const octokit = await getOctokit(userId);
+  
+  const { data: repoInfo } = await octokit.rest.repos.get({ owner, repo });
+  const branchName = repoInfo.default_branch;
+
+  const { data: branch } = await octokit.rest.repos.getBranch({
+    owner,
+    repo,
+    branch: branchName,
+  });
+  const latestCommitSha = branch.commit.sha;
+
+  const { data: commit } = await octokit.rest.git.getCommit({
+    owner,
+    repo,
+    commit_sha: latestCommitSha,
+  });
+  const baseTreeSha = commit.tree.sha;
+
+  const { data: treeData } = await octokit.rest.git.getTree({
+    owner,
+    repo,
+    tree_sha: baseTreeSha,
+    recursive: "true",
+  });
+
+  const newTree: any[] = [];
+  const oldPrefix = oldPath + "/";
+  for (const item of treeData.tree) {
+    if (item.type === "blob") {
+      if (item.path?.startsWith(oldPrefix) || item.path === oldPath) {
+         const relativePath = item.path.substring(oldPath.length);
+         newTree.push({
+           path: newPath + relativePath,
+           mode: item.mode,
+           type: item.type,
+           sha: item.sha,
+         });
+         
+         newTree.push({
+           path: item.path,
+           mode: item.mode,
+           type: item.type,
+           sha: null,
+         });
+      }
+    }
+  }
+
+  if (newTree.length === 0) {
+    throw new Error("No files found to rename");
+  }
+
+  const { data: newTreeData } = await octokit.rest.git.createTree({
+    owner,
+    repo,
+    base_tree: baseTreeSha,
+    tree: newTree,
+  });
+
+  const { data: newCommit } = await octokit.rest.git.createCommit({
+    owner,
+    repo,
+    message,
+    tree: newTreeData.sha,
+    parents: [latestCommitSha],
+  });
+
+  await octokit.rest.git.updateRef({
+    owner,
+    repo,
+    ref: `heads/${branchName}`,
+    sha: newCommit.sha,
+  });
+}
+
+export async function deleteDirectory(
+  userId: string,
+  owner: string,
+  repo: string,
+  path: string,
+  message: string
+) {
+  const octokit = await getOctokit(userId);
+  
+  const { data: repoInfo } = await octokit.rest.repos.get({ owner, repo });
+  const branchName = repoInfo.default_branch;
+
+  const { data: branch } = await octokit.rest.repos.getBranch({
+    owner,
+    repo,
+    branch: branchName,
+  });
+  const latestCommitSha = branch.commit.sha;
+
+  const { data: commit } = await octokit.rest.git.getCommit({
+    owner,
+    repo,
+    commit_sha: latestCommitSha,
+  });
+  const baseTreeSha = commit.tree.sha;
+
+  const { data: treeData } = await octokit.rest.git.getTree({
+    owner,
+    repo,
+    tree_sha: baseTreeSha,
+    recursive: "true",
+  });
+
+  const newTree: any[] = [];
+  const oldPrefix = path + "/";
+  for (const item of treeData.tree) {
+    if (item.type === "blob") {
+      if (item.path?.startsWith(oldPrefix) || item.path === path) {
+         newTree.push({
+           path: item.path,
+           mode: item.mode,
+           type: item.type,
+           sha: null,
+         });
+      }
+    }
+  }
+
+  if (newTree.length === 0) {
+    return;
+  }
+
+  const { data: newTreeData } = await octokit.rest.git.createTree({
+    owner,
+    repo,
+    base_tree: baseTreeSha,
+    tree: newTree,
+  });
+
+  const { data: newCommit } = await octokit.rest.git.createCommit({
+    owner,
+    repo,
+    message,
+    tree: newTreeData.sha,
+    parents: [latestCommitSha],
+  });
+
+  await octokit.rest.git.updateRef({
+    owner,
+    repo,
+    ref: `heads/${branchName}`,
+    sha: newCommit.sha,
+  });
+}
+
+
 export async function getOrCreateWorkspaceRepo(
   userId: string,
   owner: WorkspaceOwnerOption

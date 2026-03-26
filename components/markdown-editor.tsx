@@ -1,7 +1,8 @@
 "use client";
 
 import type { CSSProperties } from "react";
-import { useState, useTransition, useMemo, useEffect, useRef } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
+import { useMutation } from "@tanstack/react-query";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeSlug from "rehype-slug";
@@ -132,8 +133,27 @@ export function MarkdownEditor({
   const [mode, setMode] = useState<'read' | 'edit'>(isNew ? 'edit' : 'read');
   const [content, setContent] = useState(initialContent);
   const [filePath, setFilePath] = useState(path || "");
-  const [isPending, startTransition] = useTransition();
   const [isSaved, setIsSaved] = useState(false);
+
+  const { mutate: saveNote, isPending } = useMutation({
+    mutationFn: async () => {
+      return saveNoteAction(
+        routeOwner,
+        filePath,
+        content,
+        sha,
+        isNew ? `Create ${filePath}` : `Update ${filePath}`
+      );
+    },
+    onMutate: () => {
+      setIsSaved(true);
+      setTimeout(() => setIsSaved(false), 3000);
+    },
+    onError: (error) => {
+      console.error(error);
+      toast.error("Failed to save. Make sure your GitHub token has the required access scopes.");
+    }
+  });
 
   const [isListening, setIsListening] = useState(false);
   const [interimTranscript, setInterimTranscript] = useState('');
@@ -227,32 +247,20 @@ export function MarkdownEditor({
   };
   
   const handleSave = () => {
-    startTransition(async () => {
-      try {
-        if (isNew && !filePath.trim()) {
-           toast.error("Please enter a file path, for example `docs/architecture.md`.");
-           return;
-        }
-        await saveNoteAction(
-          routeOwner,
-          filePath,
-          content,
-          sha,
-          isNew ? `Create ${filePath}` : `Update ${filePath}`
-        );
-        setIsSaved(true);
-        setTimeout(() => setIsSaved(false), 3000);
-        toast.success(isNew ? "New note saved to GitHub." : "Changes saved to GitHub.");
-        if (isNew) {
-           router.push(getWorkspaceBlobPath(routeOwner, filePath));
-        } else {
-           setMode('read');
-        }
-      } catch (error) {
-        console.error(error);
-        toast.error("Failed to save. Make sure your GitHub token has the required access scopes.");
-      }
-    });
+    if (isNew && !filePath.trim()) {
+       toast.error("Please enter a file path, for example `docs/architecture.md`.");
+       return;
+    }
+    
+    // Optimistic UI updates
+    toast.success(isNew ? "New note saved to GitHub." : "Changes saved to GitHub.");
+    if (isNew) {
+       router.push(getWorkspaceBlobPath(routeOwner, filePath));
+    } else {
+       setMode('read');
+    }
+    
+    saveNote();
   };
 
   const hasUnsavedChanges = content !== initialContent;

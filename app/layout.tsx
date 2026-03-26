@@ -13,6 +13,8 @@ const fontMono = Geist_Mono({
   variable: "--font-mono",
 })
 
+import { QueryProvider } from "@/components/query-provider"
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -25,12 +27,14 @@ export default function RootLayout({
       className={cn("antialiased", fontMono.variable, "font-sans", dmSans.variable)}
     >
       <body>
-        <TooltipProvider>
-          <ThemeProvider>
-            {children}
-            <Toaster />
-          </ThemeProvider>
-        </TooltipProvider>
+        <QueryProvider>
+          <TooltipProvider>
+            <ThemeProvider>
+              {children}
+              <Toaster />
+            </ThemeProvider>
+          </TooltipProvider>
+        </QueryProvider>
       </body>
     </html>
   )
