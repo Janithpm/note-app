@@ -69,7 +69,6 @@ function WorkspaceChoiceCard({
           variant={pending ? "secondary" : "outline"}
           className="shrink-0"
           onClick={onOpen}
-          disabled={pending}
           asChild={!onOpen}
         >
           {onOpen ? (
@@ -102,13 +101,14 @@ export function WorkspaceChooser({
 
   const openPersonalWorkspace = () => {
     startTransition(async () => {
+      beginWorkspaceTransition();
+      router.push(getWorkspaceOwnerHref({ routeSegment: PERSONAL_WORKSPACE_SEGMENT }));
+
       try {
-        beginWorkspaceTransition();
         await rememberWorkspaceVisitAction(PERSONAL_WORKSPACE_SEGMENT);
-        router.push(getWorkspaceOwnerHref({ routeSegment: PERSONAL_WORKSPACE_SEGMENT }));
       } catch (error) {
         console.error(error);
-        toast.error("Could not open the personal workspace. Please try again.");
+        toast.error("Could not remember the personal workspace.");
       }
     });
   };

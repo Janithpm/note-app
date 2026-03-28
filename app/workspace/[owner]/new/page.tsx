@@ -21,10 +21,9 @@ export default async function OrganizationNewWorkspacePage({
     <WorkspaceShell userId={session.user.id} routeOwner={owner}>
       <div className="flex h-full min-h-0 flex-col">
         <MarkdownEditor
-          initialContent="# New Note\n\nStart typing here..."
           isNew
           routeOwner={owner}
-          path={initialPath}
+          initialPath={initialPath}
         />
       </div>
     </WorkspaceShell>

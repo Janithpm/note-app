@@ -3,6 +3,7 @@ import { ArrowLeft, CircleAlert } from "lucide-react";
 import { notFound } from "next/navigation";
 
 import { FileTree } from "@/components/file-tree";
+import { WorkspaceQueryHydration } from "@/components/workspace-query-hydration";
 import { RepositoryHeader } from "@/components/repository-header";
 import { SearchPalette } from "@/components/search-palette";
 import { WorkspaceToast } from "@/components/workspace-toast";
@@ -78,28 +79,32 @@ export async function WorkspaceShell({
       <WorkspaceVisitTracker routeOwner={workspace.activeOwner.routeSegment} />
       <SearchPalette />
       <SidebarProvider defaultOpen>
-        <FileTree
-          initialData={initialData}
+        <WorkspaceQueryHydration
           routeOwner={workspace.activeOwner.routeSegment}
-          activeOwner={workspace.activeOwner}
-          owners={workspace.owners}
-        />
-        <SidebarInset className="min-w-0">
-          <RepositoryHeader
-            activeOwner={workspace.activeOwner}
+          treeData={initialData}
+        >
+          <FileTree
             routeOwner={workspace.activeOwner.routeSegment}
+            activeOwner={workspace.activeOwner}
+            owners={workspace.owners}
           />
-          <div className="relative min-h-0 flex-1 overflow-hidden">
-            {errorTitle && errorDescription ? (
-              <WorkspaceErrorState
-                title={errorTitle}
-                description={errorDescription}
-              />
-            ) : (
-              children
-            )}
-          </div>
-        </SidebarInset>
+          <SidebarInset className="min-w-0">
+            <RepositoryHeader
+              activeOwner={workspace.activeOwner}
+              routeOwner={workspace.activeOwner.routeSegment}
+            />
+            <div className="relative min-h-0 flex-1 overflow-hidden">
+              {errorTitle && errorDescription ? (
+                <WorkspaceErrorState
+                  title={errorTitle}
+                  description={errorDescription}
+                />
+              ) : (
+                children
+              )}
+            </div>
+          </SidebarInset>
+        </WorkspaceQueryHydration>
       </SidebarProvider>
     </>
   );

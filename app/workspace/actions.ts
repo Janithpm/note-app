@@ -5,8 +5,10 @@ import { headers } from "next/headers";
 
 import { auth } from "@/lib/auth";
 import {
+  createDirectory,
   deleteDirectory,
   deleteFileContent,
+  getFileContent,
   getRepositoryContents,
   renameDirectory,
   renameFileContent,
@@ -16,6 +18,8 @@ import {
 import {
   updateWorkspacePersistenceMode,
   persistWorkspaceVisit,
+  getWorkspacePreferences,
+  resolveRememberedWorkspaceOwner,
 } from "@/lib/workspace-preferences";
 import {
   type WorkspacePersistenceMode,
@@ -24,6 +28,11 @@ import {
   getWorkspaceBlobPath,
   getWorkspaceSettingsPath,
 } from "@/lib/workspace";
+import {
+  type WorkspaceFileData,
+  type WorkspacePreferencesData,
+} from "@/lib/workspace-query";
+import { filterVisibleWorkspaceTreeItems } from "@/lib/workspace-tree";
 
 async function getSessionUserId() {
   const session = await auth.api.getSession({
@@ -48,12 +57,60 @@ export async function fetchRepoContents(
     throw new Error("Workspace not available");
   }
 
-  return getRepositoryContents(
+  const contents = await getRepositoryContents(
     userId,
     workspace.activeOwner.login,
     WORKSPACE_REPO_NAME,
     path
   );
+
+  return filterVisibleWorkspaceTreeItems(contents as Array<{ name: string }>);
+}
+
+export async function fetchWorkspaceFileAction(
+  routeOwner: string | null,
+  path: string
+): Promise<WorkspaceFileData> {
+  const userId = await getSessionUserId();
+  const workspace = await resolveWorkspaceOwner(userId, routeOwner);
+
+  if (!workspace.activeOwner) {
+    throw new Error("Workspace not available");
+  }
+
+  const file = await getFileContent(
+    userId,
+    workspace.activeOwner.login,
+    WORKSPACE_REPO_NAME,
+    path
+  );
+
+  return {
+    path,
+    content: file.content,
+    sha: file.sha,
+    pending: false,
+    optimistic: false,
+    syncError: null,
+  };
+}
+
+export async function fetchWorkspacePreferencesAction(): Promise<WorkspacePreferencesData> {
+  const userId = await getSessionUserId();
+  const [preferences, rememberedWorkspace] = await Promise.all([
+    getWorkspacePreferences(userId),
+    resolveRememberedWorkspaceOwner(userId),
+  ]);
+
+  return {
+    persistenceMode: preferences.persistenceMode,
+    currentOwner: rememberedWorkspace.hasRememberedOwner
+      ? rememberedWorkspace.rememberedOwner
+      : null,
+    pending: false,
+    optimistic: false,
+    syncError: null,
+  };
 }
 
 export async function saveNoteAction(
@@ -70,7 +127,7 @@ export async function saveNoteAction(
     throw new Error("Workspace not available");
   }
 
-  await saveFileContent(
+  const result = await saveFileContent(
     userId,
     workspace.activeOwner.login,
     WORKSPACE_REPO_NAME,
@@ -84,7 +141,10 @@ export async function saveNoteAction(
   revalidatePath(getWorkspaceBasePath(routeOwner));
   revalidatePath("/workspace");
 
-  return true;
+  return {
+    path: result.content?.path ?? path,
+    sha: result.content?.sha ?? sha ?? "",
+  };
 }
 
 export async function deleteFileAction(
@@ -112,7 +172,9 @@ export async function deleteFileAction(
   revalidatePath(getWorkspaceBasePath(routeOwner));
   revalidatePath("/workspace");
 
-  return true;
+  return {
+    path,
+  };
 }
 
 export async function renameFileAction(
@@ -143,7 +205,10 @@ export async function renameFileAction(
   revalidatePath(getWorkspaceBasePath(routeOwner));
   revalidatePath("/workspace");
 
-  return true;
+  return {
+    oldPath,
+    newPath,
+  };
 }
 
 export async function deleteDirectoryAction(
@@ -169,7 +234,38 @@ export async function deleteDirectoryAction(
   revalidatePath(getWorkspaceBasePath(routeOwner));
   revalidatePath("/workspace");
 
-  return true;
+  return {
+    path,
+  };
+}
+
+export async function createDirectoryAction(
+  routeOwner: string | null,
+  path: string,
+  message: string
+) {
+  const userId = await getSessionUserId();
+  const workspace = await resolveWorkspaceOwner(userId, routeOwner);
+
+  if (!workspace.activeOwner) {
+    throw new Error("Workspace not available");
+  }
+
+  const result = await createDirectory(
+    userId,
+    workspace.activeOwner.login,
+    WORKSPACE_REPO_NAME,
+    path,
+    message
+  );
+
+  revalidatePath(getWorkspaceBasePath(routeOwner));
+  revalidatePath("/workspace");
+
+  return {
+    path: result.path,
+    gitkeepPath: result.gitkeepPath,
+  };
 }
 
 export async function renameDirectoryAction(
@@ -197,7 +293,10 @@ export async function renameDirectoryAction(
   revalidatePath(getWorkspaceBasePath(routeOwner));
   revalidatePath("/workspace");
 
-  return true;
+  return {
+    oldPath,
+    newPath,
+  };
 }
 
 export async function rememberWorkspaceVisitAction(routeOwner: string | null) {
@@ -213,4 +312,9 @@ export async function updateWorkspacePersistenceModeAction(
   await updateWorkspacePersistenceMode(userId, mode, currentOwner);
   revalidatePath("/workspace");
   revalidatePath(getWorkspaceSettingsPath());
+
+  return {
+    persistenceMode: mode,
+    currentOwner,
+  };
 }

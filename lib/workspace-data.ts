@@ -7,6 +7,7 @@ import {
   resolveWorkspaceOwner,
 } from "@/lib/github";
 import { type WorkspaceWarning, WORKSPACE_REPO_NAME } from "@/lib/workspace";
+import { filterVisibleWorkspaceTreeItems } from "@/lib/workspace-tree";
 
 type RepoTreeItem = {
   name: string;
@@ -35,12 +36,14 @@ export const getWorkspaceShellData = cache(
 
     try {
       await getOrCreateWorkspaceRepo(userId, workspace.activeOwner);
-      initialData = (await getRepositoryContents(
-        userId,
-        workspace.activeOwner.login,
-        WORKSPACE_REPO_NAME,
-        ""
-      )) as RepoTreeItem[];
+      initialData = filterVisibleWorkspaceTreeItems(
+        (await getRepositoryContents(
+          userId,
+          workspace.activeOwner.login,
+          WORKSPACE_REPO_NAME,
+          ""
+        )) as RepoTreeItem[]
+      );
     } catch (error) {
       console.error(error);
       warning ??= getWorkspaceWarningFromRepoError(error, workspace.activeOwner);

@@ -22,6 +22,13 @@ type GitHubAccount = {
   scope: string | null;
 };
 
+type GitTreeEntry = {
+  path: string;
+  mode: "100644" | "100755" | "040000" | "160000" | "120000";
+  type: "blob" | "tree" | "commit";
+  sha: string | null;
+};
+
 function getErrorStatus(error: unknown) {
   if (
     typeof error === "object" &&
@@ -241,6 +248,31 @@ export async function saveFileContent(
   return response.data;
 }
 
+export async function createDirectory(
+  userId: string,
+  owner: string,
+  repo: string,
+  path: string,
+  message: string
+) {
+  const normalizedPath = path.split("/").filter(Boolean).join("/");
+  const gitkeepPath = `${normalizedPath}/.gitkeep`;
+  const result = await saveFileContent(
+    userId,
+    owner,
+    repo,
+    gitkeepPath,
+    "",
+    message
+  );
+
+  return {
+    path: normalizedPath,
+    gitkeepPath,
+    sha: result.content?.sha ?? "",
+  };
+}
+
 export async function deleteFileContent(
   userId: string,
   owner: string,
@@ -308,7 +340,7 @@ export async function renameDirectory(
     recursive: "true",
   });
 
-  const newTree: any[] = [];
+  const newTree: GitTreeEntry[] = [];
   const oldPrefix = oldPath + "/";
   for (const item of treeData.tree) {
     if (item.type === "blob") {
@@ -316,14 +348,14 @@ export async function renameDirectory(
          const relativePath = item.path.substring(oldPath.length);
          newTree.push({
            path: newPath + relativePath,
-           mode: item.mode,
+           mode: item.mode as GitTreeEntry["mode"],
            type: item.type,
            sha: item.sha,
          });
          
          newTree.push({
            path: item.path,
-           mode: item.mode,
+           mode: item.mode as GitTreeEntry["mode"],
            type: item.type,
            sha: null,
          });
@@ -391,14 +423,14 @@ export async function deleteDirectory(
     recursive: "true",
   });
 
-  const newTree: any[] = [];
+  const newTree: GitTreeEntry[] = [];
   const oldPrefix = path + "/";
   for (const item of treeData.tree) {
     if (item.type === "blob") {
       if (item.path?.startsWith(oldPrefix) || item.path === path) {
          newTree.push({
            path: item.path,
-           mode: item.mode,
+           mode: item.mode as GitTreeEntry["mode"],
            type: item.type,
            sha: null,
          });

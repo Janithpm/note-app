@@ -3,25 +3,27 @@
 import * as React from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   ChevronRight,
+  CircleAlert,
+  Edit2,
   File,
   FileText,
   Folder,
+  FolderPlus,
+  MoreHorizontal,
   Plus,
   Search,
-  MoreHorizontal,
   Trash2,
-  Edit2
 } from "lucide-react";
 
 import {
-  fetchRepoContents,
-  deleteFileAction,
-  renameFileAction,
+  createDirectoryAction,
   deleteDirectoryAction,
+  deleteFileAction,
   renameDirectoryAction,
+  renameFileAction,
 } from "@/app/workspace/actions";
 import { AuthButton } from "@/components/auth-button";
 import { FullscreenToggle } from "@/components/fullscreen-toggle";
@@ -32,19 +34,19 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-  DialogDescription,
-} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import {
   Sidebar,
@@ -58,43 +60,66 @@ import {
   SidebarMenuAction,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarMenuSub,
-  SidebarMenuSubButton,
-  SidebarMenuSubItem,
   SidebarRail,
   SidebarSeparator,
 } from "@/components/ui/sidebar";
 import { WorkspaceSwitcher } from "@/components/workspace-switcher";
+import { cn } from "@/lib/utils";
 import {
+  getWorkspaceBasePath,
   getWorkspaceBlobPath,
   getWorkspaceNewPath,
   type WorkspaceOwnerOption,
 } from "@/lib/workspace";
+import {
+  getParentPath,
+  getWorkspaceItemKey,
+  getWorkspaceQueryKeysForPath,
+  isPathOrDescendant,
+  markWorkspaceTreeItemState,
+  moveWorkspaceFileCache,
+  remapPathPrefix,
+  remapWorkspaceDescendantCaches,
+  removeWorkspaceDescendantCaches,
+  removeWorkspaceTreeItem,
+  restoreSnapshots,
+  setWorkspaceFileState,
+  type WorkspaceFileData,
+  type WorkspaceTreeItem,
+  upsertWorkspaceTreeItem,
+  useOptimisticMutation,
+  useWorkspaceTreeQuery,
+  workspaceKeys,
+} from "@/lib/workspace-query";
 import { toast } from "sonner";
 
-type RepoItem = {
-  name: string;
-  path: string;
-  sha: string;
-  type: "dir" | "file" | string;
-};
-
 type FileTreeActionProps = {
-  onRename: (item: RepoItem) => void;
-  onDelete: (item: RepoItem) => void;
-  onCreateInFolder?: (item: RepoItem) => void;
+  onRename: (item: WorkspaceTreeItem) => void;
+  onDelete: (item: WorkspaceTreeItem) => void;
+  onCreateInFolder?: (item: WorkspaceTreeItem) => void;
+  onCreateFolderInFolder?: (item: WorkspaceTreeItem) => void;
 };
 
-function getRepoItemKey(item: RepoItem) {
-  return `${item.type}:${item.path || item.sha}`;
-}
+type RenameMutationVariables = {
+  item: WorkspaceTreeItem;
+  newName: string;
+};
 
-function sortRepoItems(items: RepoItem[]) {
-  return [...items].sort((a, b) => {
-    if (a.type === "dir" && b.type !== "dir") return -1;
-    if (a.type !== "dir" && b.type === "dir") return 1;
-    return a.name.localeCompare(b.name);
-  });
+type DeleteMutationVariables = {
+  item: WorkspaceTreeItem;
+};
+
+type CreateFolderMutationVariables = {
+  parentPath: string;
+  folderName: string;
+};
+
+const TREE_INDENT_STEP_PX = 18;
+
+function getTreeRowStyle(depth: number): React.CSSProperties {
+  return {
+    paddingLeft: `${10 + depth * TREE_INDENT_STEP_PX}px`,
+  };
 }
 
 function getCurrentBlobPath(pathname: string) {
@@ -113,136 +138,66 @@ function openSearchPalette() {
   );
 }
 
-function FileLink({
-  routeOwner,
+function ItemSyncIndicator({
   item,
-  isActive,
-  nested = false,
-  onRename,
-  onDelete,
 }: {
-  routeOwner: string | null;
-  item: RepoItem;
-  isActive: boolean;
-  nested?: boolean;
-} & FileTreeActionProps) {
-  const isMarkdown = item.name.endsWith(".md") || item.name.endsWith(".mdx");
-  const href = getWorkspaceBlobPath(routeOwner, item.path);
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "F2") {
-      e.preventDefault();
-      onRename(item);
-    } else if (e.key === "Delete" || e.key === "Backspace") {
-      e.preventDefault();
-      onDelete(item);
-    }
-  };
-
-  const actions = (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <SidebarMenuAction showOnHover>
-          <MoreHorizontal />
-          <span className="sr-only">More</span>
-        </SidebarMenuAction>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent side="right" align="start">
-        <DropdownMenuItem onClick={() => onRename(item)}>
-          <Edit2 className="mr-2 h-4 w-4" /> Rename
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => onDelete(item)} className="text-destructive focus:text-destructive">
-          <Trash2 className="mr-2 h-4 w-4" /> Delete
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-
-  if (nested) {
+  item: WorkspaceTreeItem;
+}) {
+  if (item.syncError) {
     return (
-      <SidebarMenuSubItem>
-        <SidebarMenuSubButton asChild isActive={isActive} onKeyDown={handleKeyDown}>
-          <Link href={href}>
-            {isMarkdown ? (
-              <FileText className="text-primary/80" />
-            ) : (
-              <File className="text-muted-foreground" />
-            )}
-            <span>{item.name}</span>
-          </Link>
-        </SidebarMenuSubButton>
-        {actions}
-      </SidebarMenuSubItem>
+      <span title={item.syncError}>
+        <CircleAlert className="size-3.5 text-destructive" />
+      </span>
     );
   }
 
-  return (
-    <SidebarMenuItem>
-      <SidebarMenuButton asChild isActive={isActive} tooltip={item.path} onKeyDown={handleKeyDown}>
-        <Link href={href}>
-          {isMarkdown ? (
-            <FileText className="text-primary/80" />
-          ) : (
-            <File className="text-muted-foreground" />
-          )}
-          <span>{item.name}</span>
-        </Link>
-      </SidebarMenuButton>
-      {actions}
-    </SidebarMenuItem>
-  );
+  if (item.pending) {
+    return null;
+  }
+
+  return null;
 }
 
-function FolderNode({
-  routeOwner,
+function ItemActions({
   item,
-  currentPath,
-  nested = false,
   onRename,
   onDelete,
   onCreateInFolder,
+  onCreateFolderInFolder,
 }: {
-  routeOwner: string | null;
-  item: RepoItem;
-  currentPath: string;
-  nested?: boolean;
-} & FileTreeActionProps) {
-  const shouldBeOpen =
-    currentPath === item.path || currentPath.startsWith(`${item.path}/`);
-
-  const [isOpen, setIsOpen] = React.useState(shouldBeOpen);
-  const { data: children = [], isLoading: loading } = useQuery({
-    queryKey: ['repoContents', routeOwner, item.path],
-    queryFn: async () => {
-      const data = await fetchRepoContents(routeOwner, item.path);
-      return sortRepoItems(data as RepoItem[]);
-    },
-    enabled: isOpen,
-    staleTime: 60 * 1000,
-  });
-
-  React.useEffect(() => {
-    if (shouldBeOpen) {
-      setIsOpen(true);
-    }
-  }, [shouldBeOpen]);
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "F2") {
-      e.preventDefault();
-      onRename(item);
-    } else if (e.key === "Delete" || e.key === "Backspace") {
-      e.preventDefault();
-      onDelete(item);
-    }
-  };
-
-  const actions = (
+  item: WorkspaceTreeItem;
+  onRename: (item: WorkspaceTreeItem) => void;
+  onDelete: (item: WorkspaceTreeItem) => void;
+  onCreateInFolder?: (item: WorkspaceTreeItem) => void;
+  onCreateFolderInFolder?: (item: WorkspaceTreeItem) => void;
+}) {
+  return (
     <>
-      <SidebarMenuAction showOnHover className="right-8" onClick={() => onCreateInFolder?.(item)}>
-        <Plus />
-        <span className="sr-only">New Note</span>
-      </SidebarMenuAction>
+      {item.type === "dir" ? (
+        <SidebarMenuAction
+          showOnHover
+          className="right-16"
+          onClick={() => onCreateInFolder?.(item)}
+        >
+          <Plus />
+          <span className="sr-only">New Note</span>
+        </SidebarMenuAction>
+      ) : null}
+      {item.type === "dir" ? (
+        <SidebarMenuAction
+          showOnHover
+          className="right-12"
+          onClick={() => onCreateFolderInFolder?.(item)}
+        >
+          <FolderPlus />
+          <span className="sr-only">New Folder</span>
+        </SidebarMenuAction>
+      ) : null}
+      {item.syncError ? (
+        <SidebarMenuAction className="pointer-events-none right-8 opacity-100">
+          <ItemSyncIndicator item={item} />
+        </SidebarMenuAction>
+      ) : null}
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <SidebarMenuAction showOnHover>
@@ -252,126 +207,191 @@ function FolderNode({
         </DropdownMenuTrigger>
         <DropdownMenuContent side="right" align="start">
           <DropdownMenuItem onClick={() => onRename(item)}>
-            <Edit2 className="mr-2 h-4 w-4" /> Rename
+            <Edit2 className="mr-2 h-4 w-4" />
+            Rename
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => onDelete(item)} className="text-destructive focus:text-destructive">
-            <Trash2 className="mr-2 h-4 w-4" /> Delete
+          <DropdownMenuItem
+            onClick={() => onDelete(item)}
+            className="text-destructive focus:text-destructive"
+          >
+            <Trash2 className="mr-2 h-4 w-4" />
+            Delete
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
     </>
   );
+}
 
-  if (nested) {
-    return (
-      <SidebarMenuSubItem>
-        <Collapsible
-          open={isOpen}
-          onOpenChange={(open) => {
-            setIsOpen(open);
-          }}
-        >
-          <CollapsibleTrigger asChild>
-            <SidebarMenuSubButton isActive={shouldBeOpen} onKeyDown={handleKeyDown}>
-              <ChevronRight
-                className={`transition-transform ${
-                  isOpen ? "rotate-90" : ""
-                }`}
-              />
-              <Folder className="text-primary/80" />
-              <span>{item.name}</span>
-            </SidebarMenuSubButton>
-          </CollapsibleTrigger>
-          {actions}
-          <CollapsibleContent>
-            <SidebarMenuSub>
-              {loading ? (
-                <SidebarMenuSubItem>
-                  <div className="px-2 py-1 text-xs text-muted-foreground">
-                    Loading...
-                  </div>
-                </SidebarMenuSubItem>
-              ) : (
-                children.map((child) => (
-                  <FileNode
-                    key={getRepoItemKey(child)}
-                    routeOwner={routeOwner}
-                    item={child}
-                    currentPath={currentPath}
-                    nested
-                    onRename={onRename}
-                    onDelete={onDelete}
-                    onCreateInFolder={onCreateInFolder}
-                  />
-                ))
-              )}
-            </SidebarMenuSub>
-          </CollapsibleContent>
-        </Collapsible>
-      </SidebarMenuSubItem>
-    );
-  }
+function FileLink({
+  routeOwner,
+  item,
+  isActive,
+  depth = 0,
+  onRename,
+  onDelete,
+}: {
+  routeOwner: string | null;
+  item: WorkspaceTreeItem;
+  isActive: boolean;
+  depth?: number;
+} & FileTreeActionProps) {
+  const isMarkdown = item.name.endsWith(".md") || item.name.endsWith(".mdx");
+  const href = getWorkspaceBlobPath(routeOwner, item.path);
+
+  const handleKeyDown = (event: React.KeyboardEvent) => {
+    if (event.key === "F2") {
+      event.preventDefault();
+      onRename(item);
+    } else if (event.key === "Delete" || event.key === "Backspace") {
+      event.preventDefault();
+      onDelete(item);
+    }
+  };
+
+  const sharedClassName = cn(item.pending && "opacity-80");
 
   return (
     <SidebarMenuItem>
-      <Collapsible
-        open={isOpen}
-        onOpenChange={(open) => {
-          setIsOpen(open);
-        }}
+      <SidebarMenuButton
+        asChild
+        isActive={isActive}
+        tooltip={item.path}
+        onKeyDown={handleKeyDown}
+        className={cn(sharedClassName, "pr-12")}
+        style={getTreeRowStyle(depth)}
       >
-        <CollapsibleTrigger asChild>
-          <SidebarMenuButton isActive={shouldBeOpen} tooltip={item.path} onKeyDown={handleKeyDown}>
-            <ChevronRight
-              className={`transition-transform ${isOpen ? "rotate-90" : ""}`}
-            />
-            <Folder className="text-primary/80" />
-            <span>{item.name}</span>
-          </SidebarMenuButton>
-        </CollapsibleTrigger>
-        {actions}
-        <CollapsibleContent>
-          <SidebarMenuSub>
-            {loading ? (
-              <SidebarMenuSubItem>
-                <div className="px-2 py-1 text-xs text-muted-foreground">
-                  Loading...
-                </div>
-              </SidebarMenuSubItem>
-            ) : (
-              children.map((child) => (
-                <FileNode
-                  key={getRepoItemKey(child)}
-                  routeOwner={routeOwner}
-                  item={child}
-                  currentPath={currentPath}
-                  nested
-                  onRename={onRename}
-                  onDelete={onDelete}
-                  onCreateInFolder={onCreateInFolder}
-                />
-              ))
-            )}
-          </SidebarMenuSub>
-        </CollapsibleContent>
+        <Link href={href}>
+          {isMarkdown ? (
+            <FileText className="text-primary/80" />
+          ) : (
+            <File className="text-muted-foreground" />
+          )}
+          <span>{item.name}</span>
+        </Link>
+      </SidebarMenuButton>
+      <ItemActions item={item} onRename={onRename} onDelete={onDelete} />
+    </SidebarMenuItem>
+  );
+}
+
+function FolderNode({
+  routeOwner,
+  item,
+  currentPath,
+  depth = 0,
+  onRename,
+  onDelete,
+  onCreateInFolder,
+  onCreateFolderInFolder,
+}: {
+  routeOwner: string | null;
+  item: WorkspaceTreeItem;
+  currentPath: string;
+  depth?: number;
+} & FileTreeActionProps) {
+  const shouldBeOpen =
+    currentPath === item.path || currentPath.startsWith(`${item.path}/`);
+
+  const [isOpen, setIsOpen] = React.useState(shouldBeOpen);
+  const childrenQuery = useWorkspaceTreeQuery(routeOwner, item.path, {
+    enabled: isOpen,
+  });
+  const children = childrenQuery.data ?? [];
+  const showInitialPlaceholder = !childrenQuery.data && childrenQuery.isPending;
+
+  React.useEffect(() => {
+    if (shouldBeOpen) {
+      setIsOpen(true);
+    }
+  }, [shouldBeOpen]);
+
+  const handleKeyDown = (event: React.KeyboardEvent) => {
+    if (event.key === "F2") {
+      event.preventDefault();
+      onRename(item);
+    } else if (event.key === "Delete" || event.key === "Backspace") {
+      event.preventDefault();
+      onDelete(item);
+    }
+  };
+
+  const trigger = (
+    <SidebarMenuButton
+      isActive={shouldBeOpen}
+      tooltip={item.path}
+      onKeyDown={handleKeyDown}
+      className={cn(item.pending && "opacity-80", "pr-18")}
+      style={getTreeRowStyle(depth)}
+    >
+      <ChevronRight
+        className={cn("transition-transform", isOpen && "rotate-90")}
+      />
+      <Folder className="text-primary/80" />
+      <span>{item.name}</span>
+    </SidebarMenuButton>
+  );
+
+  const content = (
+    <SidebarMenu className="mt-1 gap-1">
+      {showInitialPlaceholder ? (
+        <SidebarMenuItem>
+          <div
+            className="px-2 py-1 text-xs text-muted-foreground"
+            style={getTreeRowStyle(depth + 1)}
+          >
+            Loading folder…
+          </div>
+        </SidebarMenuItem>
+      ) : (
+        children.map((child) => (
+          <FileNode
+            key={getWorkspaceItemKey(child)}
+            routeOwner={routeOwner}
+            item={child}
+            currentPath={currentPath}
+            depth={depth + 1}
+            onRename={onRename}
+            onDelete={onDelete}
+            onCreateInFolder={onCreateInFolder}
+            onCreateFolderInFolder={onCreateFolderInFolder}
+          />
+        ))
+      )}
+    </SidebarMenu>
+  );
+
+  return (
+    <SidebarMenuItem>
+      <Collapsible open={isOpen} onOpenChange={setIsOpen}>
+        <CollapsibleTrigger asChild>{trigger}</CollapsibleTrigger>
+        <ItemActions
+          item={item}
+          onRename={onRename}
+          onDelete={onDelete}
+          onCreateInFolder={onCreateInFolder}
+          onCreateFolderInFolder={onCreateFolderInFolder}
+        />
+        <CollapsibleContent>{content}</CollapsibleContent>
       </Collapsible>
     </SidebarMenuItem>
   );
 }
 
-export function FileNode({
+function FileNode({
   routeOwner,
   item,
   currentPath,
-  nested = false,
+  depth = 0,
   onRename,
   onDelete,
   onCreateInFolder,
+  onCreateFolderInFolder,
 }: {
   routeOwner: string | null;
-  item: RepoItem;
+  item: WorkspaceTreeItem;
   currentPath: string;
-  nested?: boolean;
+  depth?: number;
 } & FileTreeActionProps) {
   if (item.type === "dir") {
     return (
@@ -379,10 +399,11 @@ export function FileNode({
         routeOwner={routeOwner}
         item={item}
         currentPath={currentPath}
-        nested={nested}
+        depth={depth}
         onRename={onRename}
         onDelete={onDelete}
         onCreateInFolder={onCreateInFolder}
+        onCreateFolderInFolder={onCreateFolderInFolder}
       />
     );
   }
@@ -392,163 +413,391 @@ export function FileNode({
       routeOwner={routeOwner}
       item={item}
       isActive={currentPath === item.path}
-      nested={nested}
+      depth={depth}
       onRename={onRename}
       onDelete={onDelete}
+      onCreateFolderInFolder={onCreateFolderInFolder}
     />
   );
 }
 
 export function FileTree({
-  initialData,
   routeOwner,
   activeOwner,
   owners,
 }: {
-  initialData: RepoItem[];
   routeOwner: string | null;
   activeOwner: WorkspaceOwnerOption;
   owners: WorkspaceOwnerOption[];
 }) {
   const pathname = usePathname();
   const router = useRouter();
-  const currentPath = getCurrentBlobPath(pathname);
   const queryClient = useQueryClient();
+  const currentPath = getCurrentBlobPath(pathname);
+  const rootQuery = useWorkspaceTreeQuery(routeOwner, "");
+  const items = rootQuery.data ?? [];
 
-  const [itemToRename, setItemToRename] = React.useState<RepoItem | null>(null);
+  const [itemToRename, setItemToRename] = React.useState<WorkspaceTreeItem | null>(null);
   const [newName, setNewName] = React.useState("");
-  const [itemToDelete, setItemToDelete] = React.useState<RepoItem | null>(null);
+  const [itemToDelete, setItemToDelete] = React.useState<WorkspaceTreeItem | null>(null);
+  const [folderDialogOpen, setFolderDialogOpen] = React.useState(false);
+  const [folderParentPath, setFolderParentPath] = React.useState<string | null>(null);
+  const [folderName, setFolderName] = React.useState("");
 
-  const handleRename = (item: RepoItem) => {
+  const renameMutation = useOptimisticMutation<
+    { oldPath: string; newPath: string },
+    RenameMutationVariables,
+    { previousLocation: string | null; newPath: string; parentPath: string }
+  >({
+    mutationFn: async ({ item, newName: nextName }) => {
+      const parentPath = getParentPath(item.path);
+      const nextPath = parentPath ? `${parentPath}/${nextName}` : nextName;
+
+      if (item.type === "dir") {
+        return renameDirectoryAction(
+          routeOwner,
+          item.path,
+          nextPath,
+          "Rename directory"
+        );
+      }
+
+      return renameFileAction(
+        routeOwner,
+        item.path,
+        nextPath,
+        item.sha,
+        "Rename file"
+      );
+    },
+    getQueryKeys: (queryClient, { item, newName: nextName }) => {
+      const parentPath = getParentPath(item.path);
+      const nextPath = parentPath ? `${parentPath}/${nextName}` : nextName;
+
+      return [
+        workspaceKeys.tree(routeOwner, parentPath),
+        ...(item.type === "dir"
+          ? getWorkspaceQueryKeysForPath(queryClient, routeOwner, item.path)
+          : [workspaceKeys.file(routeOwner, item.path)]),
+        workspaceKeys.file(routeOwner, nextPath),
+      ];
+    },
+    applyOptimisticUpdate: (queryClient, { item, newName: nextName }) => {
+      const parentPath = getParentPath(item.path);
+      const nextPath = parentPath ? `${parentPath}/${nextName}` : nextName;
+
+      const nextItem: WorkspaceTreeItem = {
+        ...item,
+        name: nextName,
+        path: nextPath,
+        pending: true,
+        optimistic: true,
+        syncError: null,
+      };
+
+      setItemToRename(null);
+
+      removeWorkspaceTreeItem(queryClient, routeOwner, item.path);
+      upsertWorkspaceTreeItem(queryClient, routeOwner, nextItem);
+
+      if (item.type === "dir") {
+        remapWorkspaceDescendantCaches(queryClient, routeOwner, item.path, nextPath);
+      } else {
+        moveWorkspaceFileCache(queryClient, routeOwner, item.path, nextPath);
+        const fileData = queryClient.getQueryData<WorkspaceFileData>(
+          workspaceKeys.file(routeOwner, nextPath)
+        );
+        if (fileData) {
+          setWorkspaceFileState(queryClient, routeOwner, nextPath, {
+            ...fileData,
+            path: nextPath,
+            pending: true,
+            optimistic: true,
+            syncError: null,
+          });
+        }
+      }
+
+      let previousLocation: string | null = null;
+
+      if (isPathOrDescendant(currentPath, item.path)) {
+        previousLocation = pathname;
+        const nextCurrentPath =
+          item.type === "dir"
+            ? remapPathPrefix(currentPath, item.path, nextPath)
+            : nextPath;
+        router.push(getWorkspaceBlobPath(routeOwner, nextCurrentPath));
+      }
+
+      return {
+        previousLocation,
+        newPath: nextPath,
+        parentPath,
+      };
+    },
+    rollback: (queryClient, variables, error, state) => {
+      restoreSnapshots(queryClient, state.snapshots);
+      if (state.context.previousLocation) {
+        router.push(state.context.previousLocation);
+      }
+      toast.error(error.message || "Failed to rename item.");
+      markWorkspaceTreeItemState(queryClient, routeOwner, variables.item.path, {
+        pending: false,
+        optimistic: false,
+        syncError: "Rename failed",
+      });
+    },
+    onSuccess: (queryClient, data) => {
+      markWorkspaceTreeItemState(queryClient, routeOwner, data.newPath, {
+        pending: false,
+        optimistic: false,
+        syncError: null,
+      });
+      const fileData = queryClient.getQueryData<WorkspaceFileData>(
+        workspaceKeys.file(routeOwner, data.newPath)
+      );
+      if (fileData) {
+        setWorkspaceFileState(queryClient, routeOwner, data.newPath, {
+          ...fileData,
+          pending: false,
+          optimistic: false,
+          syncError: null,
+        });
+      }
+      toast.success("Rename queued. Syncing workspace…");
+    },
+    invalidate: async (queryClient, _variables, _data, _error, state) => {
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: workspaceKeys.tree(routeOwner, state.context.parentPath),
+          exact: true,
+        }),
+        ...getWorkspaceQueryKeysForPath(
+          queryClient,
+          routeOwner,
+          state.context.newPath
+        ).map((queryKey) =>
+          queryClient.invalidateQueries({ queryKey, exact: true })
+        ),
+      ]);
+    },
+  });
+
+  const deleteMutation = useOptimisticMutation<
+    { path: string },
+    DeleteMutationVariables,
+    { previousLocation: string | null; parentPath: string }
+  >({
+    mutationFn: async ({ item }) => {
+      if (item.type === "dir") {
+        return deleteDirectoryAction(routeOwner, item.path, "Delete directory");
+      }
+
+      return deleteFileAction(routeOwner, item.path, item.sha, "Delete file");
+    },
+    getQueryKeys: (queryClient, { item }) => [
+      workspaceKeys.tree(routeOwner, getParentPath(item.path)),
+      ...(item.type === "dir"
+        ? getWorkspaceQueryKeysForPath(queryClient, routeOwner, item.path)
+        : [workspaceKeys.file(routeOwner, item.path)]),
+    ],
+    applyOptimisticUpdate: (queryClient, { item }) => {
+      const parentPath = getParentPath(item.path);
+      setItemToDelete(null);
+
+      removeWorkspaceTreeItem(queryClient, routeOwner, item.path);
+      if (item.type === "dir") {
+        removeWorkspaceDescendantCaches(queryClient, routeOwner, item.path);
+      } else {
+        queryClient.removeQueries({
+          queryKey: workspaceKeys.file(routeOwner, item.path),
+          exact: true,
+        });
+      }
+
+      let previousLocation: string | null = null;
+      if (isPathOrDescendant(currentPath, item.path)) {
+        previousLocation = pathname;
+        router.push(getWorkspaceBasePath(routeOwner));
+      }
+
+      return {
+        previousLocation,
+        parentPath,
+      };
+    },
+    rollback: (queryClient, variables, error, state) => {
+      restoreSnapshots(queryClient, state.snapshots);
+      if (state.context.previousLocation) {
+        router.push(state.context.previousLocation);
+      }
+      toast.error(error.message || "Failed to delete item.");
+      markWorkspaceTreeItemState(queryClient, routeOwner, variables.item.path, {
+        pending: false,
+        optimistic: false,
+        syncError: "Delete failed",
+      });
+    },
+    onSuccess: () => {
+      toast.success("Delete queued. Syncing workspace…");
+    },
+    invalidate: async (queryClient, _variables, _data, _error, state) => {
+      await queryClient.invalidateQueries({
+        queryKey: workspaceKeys.tree(routeOwner, state.context.parentPath),
+        exact: true,
+      });
+    },
+  });
+
+  const createFolderMutation = useOptimisticMutation<
+    { path: string; gitkeepPath: string },
+    CreateFolderMutationVariables,
+    { parentPath: string; newPath: string }
+  >({
+    mutationFn: async ({ parentPath, folderName: nextFolderName }) => {
+      const newPath = parentPath
+        ? `${parentPath}/${nextFolderName}`
+        : nextFolderName;
+
+      return createDirectoryAction(
+        routeOwner,
+        newPath,
+        `Create directory ${newPath}`
+      );
+    },
+    getQueryKeys: (_queryClient, { parentPath, folderName: nextFolderName }) => {
+      const newPath = parentPath
+        ? `${parentPath}/${nextFolderName}`
+        : nextFolderName;
+
+      return [
+        workspaceKeys.tree(routeOwner, parentPath),
+        workspaceKeys.tree(routeOwner, newPath),
+      ];
+    },
+    applyOptimisticUpdate: (queryClient, { parentPath, folderName: nextFolderName }) => {
+      const newPath = parentPath
+        ? `${parentPath}/${nextFolderName}`
+        : nextFolderName;
+
+      setFolderDialogOpen(false);
+      setFolderParentPath(null);
+      setFolderName("");
+
+      upsertWorkspaceTreeItem(queryClient, routeOwner, {
+        name: nextFolderName,
+        path: newPath,
+        sha: `optimistic:${newPath}`,
+        type: "dir",
+        pending: true,
+        optimistic: true,
+        syncError: null,
+      });
+      queryClient.setQueryData(workspaceKeys.tree(routeOwner, newPath), []);
+
+      return {
+        parentPath,
+        newPath,
+      };
+    },
+    rollback: (queryClient, _variables, error, state) => {
+      restoreSnapshots(queryClient, state.snapshots);
+      toast.error(error.message || "Failed to create folder.");
+    },
+    onSuccess: (queryClient, data) => {
+      markWorkspaceTreeItemState(queryClient, routeOwner, data.path, {
+        pending: false,
+        optimistic: false,
+        syncError: null,
+      });
+      toast.success("Folder created. Syncing workspace…");
+    },
+    invalidate: async (queryClient, _variables, _data, _error, state) => {
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: workspaceKeys.tree(routeOwner, state.context.parentPath),
+          exact: true,
+        }),
+        queryClient.invalidateQueries({
+          queryKey: workspaceKeys.tree(routeOwner, state.context.newPath),
+          exact: true,
+        }),
+      ]);
+    },
+  });
+
+  const handleRename = (item: WorkspaceTreeItem) => {
     setItemToRename(item);
     setNewName(item.name);
   };
-
-  const { data: items } = useQuery({
-    queryKey: ['repoContents', routeOwner, ""],
-    queryFn: async () => {
-      const data = await fetchRepoContents(routeOwner, "");
-      return sortRepoItems(data as RepoItem[]);
-    },
-    initialData: React.useMemo(() => sortRepoItems(initialData), [initialData]),
-    staleTime: 60 * 1000,
-  });
-
-  const { mutate: renameItem, isPending: isRenaming } = useMutation({
-    mutationFn: async ({ item, newName }: { item: RepoItem; newName: string }) => {
-      const pathParts = item.path.split("/");
-      pathParts.pop(); // Remove old name
-      pathParts.push(newName); // Add new name
-      const newPath = pathParts.join("/");
-
-      if (item.type === "dir") {
-        await renameDirectoryAction(routeOwner, item.path, newPath, "Rename directory");
-      } else {
-        await renameFileAction(routeOwner, item.path, newPath, item.sha, "Rename file");
-      }
-      return { item, newName, newPath };
-    },
-    onMutate: async ({ item, newName }) => {
-      const pathParts = item.path.split("/");
-      pathParts.pop();
-      const parentPath = pathParts.join("/");
-
-      await queryClient.cancelQueries({ queryKey: ['repoContents', routeOwner, parentPath] });
-      const previousItems = queryClient.getQueryData(['repoContents', routeOwner, parentPath]);
-
-      queryClient.setQueryData(['repoContents', routeOwner, parentPath], (old: RepoItem[] | undefined) => {
-        if (!old) return old;
-        return old.map(i => i.path === item.path ? { ...i, name: newName, path: `${parentPath ? parentPath + '/' : ''}${newName}` } : i);
-      });
-
-      setItemToRename(null); // Close dialog instantly
-      return { previousItems, parentPath };
-    },
-    onError: (err, variables, context) => {
-      toast.error("Failed to rename");
-      if (context?.previousItems) {
-        queryClient.setQueryData(['repoContents', routeOwner, context.parentPath], context.previousItems);
-      }
-    },
-    onSuccess: (data) => {
-      if (data.item.type === "dir") {
-        toast.success("Folder renamed successfully");
-      } else {
-        const newBlobPath = getWorkspaceBlobPath(routeOwner, data.newPath);
-        router.push(newBlobPath);
-        toast.success("File renamed successfully");
-      }
-    },
-    onSettled: (data, error, variables, context) => {
-      if (context?.parentPath !== undefined) {
-        queryClient.invalidateQueries({ queryKey: ['repoContents', routeOwner, context.parentPath] });
-      }
-    }
-  });
-
-  const { mutate: deleteItem, isPending: isDeleting } = useMutation({
-    mutationFn: async (item: RepoItem) => {
-      if (item.type === "dir") {
-        await deleteDirectoryAction(routeOwner, item.path, "Delete directory");
-      } else {
-        await deleteFileAction(routeOwner, item.path, item.sha, "Delete file");
-      }
-      return item;
-    },
-    onMutate: async (item) => {
-      const pathParts = item.path.split("/");
-      pathParts.pop();
-      const parentPath = pathParts.join("/");
-
-      await queryClient.cancelQueries({ queryKey: ['repoContents', routeOwner, parentPath] });
-      const previousItems = queryClient.getQueryData(['repoContents', routeOwner, parentPath]);
-
-      queryClient.setQueryData(['repoContents', routeOwner, parentPath], (old: RepoItem[] | undefined) => {
-        if (!old) return old;
-        return old.filter(i => i.path !== item.path);
-      });
-
-      setItemToDelete(null); // Close dialog instantly
-      return { previousItems, parentPath };
-    },
-    onError: (err, variables, context) => {
-      toast.error("Failed to delete");
-      if (context?.previousItems) {
-        queryClient.setQueryData(['repoContents', routeOwner, context.parentPath], context.previousItems);
-      }
-    },
-    onSuccess: (item) => {
-      if (item.type === "dir") {
-        toast.success("Folder deleted successfully");
-      } else {
-        router.push(`/workspace/${routeOwner || "general"}`);
-        toast.success("File deleted successfully");
-      }
-    },
-    onSettled: (data, error, variables, context) => {
-      if (context?.parentPath !== undefined) {
-        queryClient.invalidateQueries({ queryKey: ['repoContents', routeOwner, context.parentPath] });
-      }
-    }
-  });
 
   const handleRenameSubmit = () => {
     if (!itemToRename || !newName || newName === itemToRename.name) {
       setItemToRename(null);
       return;
     }
-    renameItem({ item: itemToRename, newName });
+
+    renameMutation.mutate({
+      item: itemToRename,
+      newName,
+    });
   };
 
   const handleDeleteSubmit = () => {
-    if (!itemToDelete) return;
-    deleteItem(itemToDelete);
+    if (!itemToDelete) {
+      return;
+    }
+
+    deleteMutation.mutate({ item: itemToDelete });
   };
 
-  const handleCreateInFolder = (item: RepoItem) => {
-    const basePath = getWorkspaceNewPath(routeOwner);
-    router.push(`${basePath}?folder=${encodeURIComponent(item.path)}`);
+  const handleCreateInFolder = (item: WorkspaceTreeItem) => {
+    router.push(
+      `${getWorkspaceNewPath(routeOwner)}?folder=${encodeURIComponent(item.path)}`
+    );
   };
+
+  const openCreateFolderDialog = (parentPath: string) => {
+    setFolderDialogOpen(true);
+    setFolderParentPath(parentPath);
+    setFolderName("");
+  };
+
+  const handleCreateFolderSubmit = () => {
+    const trimmedName = folderName.trim();
+
+    if (!trimmedName) {
+      toast.error("Please enter a folder name.");
+      return;
+    }
+
+    if (trimmedName.includes("/") || trimmedName.includes("\\")) {
+      toast.error("Folder names cannot include path separators.");
+      return;
+    }
+
+    const existingItems =
+      queryClient.getQueryData<WorkspaceTreeItem[]>(
+        workspaceKeys.tree(routeOwner, folderParentPath ?? "")
+      ) ?? [];
+
+    if (
+      existingItems.some(
+        (item) =>
+          item.name.toLowerCase() === trimmedName.toLowerCase()
+      )
+    ) {
+      toast.error("A file or folder with that name already exists here.");
+      return;
+    }
+
+    createFolderMutation.mutate({
+      parentPath: folderParentPath ?? "",
+      folderName: trimmedName,
+    });
+  };
+
+  const showRootPlaceholder = !rootQuery.data && rootQuery.isPending;
 
   return (
     <>
@@ -576,20 +825,55 @@ export function FileTree({
 
         <SidebarContent>
           <SidebarGroup className="pt-2">
-            <SidebarGroupLabel>Workspace Tree</SidebarGroupLabel>
+            <SidebarGroupLabel className="flex items-center justify-between gap-2">
+              <span>Workspace Tree</span>
+              <div className="flex items-center gap-1">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  title="Create file at root"
+                  onClick={() => router.push(getWorkspaceNewPath(routeOwner))}
+                >
+                  <Plus />
+                  <span className="sr-only">Create file at root</span>
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  title="Create folder at root"
+                  onClick={() => openCreateFolderDialog("")}
+                >
+                  <FolderPlus />
+                  <span className="sr-only">Create folder at root</span>
+                </Button>
+              </div>
+            </SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
-                {items.map((item) => (
-                  <FileNode
-                    key={getRepoItemKey(item)}
-                    routeOwner={routeOwner}
-                    item={item}
-                    currentPath={currentPath}
-                    onRename={handleRename}
-                    onDelete={setItemToDelete}
-                    onCreateInFolder={handleCreateInFolder}
-                  />
-                ))}
+                {showRootPlaceholder ? (
+                  <SidebarMenuItem>
+                    <div className="px-2 py-1 text-xs text-muted-foreground">
+                      Loading workspace…
+                    </div>
+                  </SidebarMenuItem>
+                ) : (
+                  items.map((item) => (
+                    <FileNode
+                      key={getWorkspaceItemKey(item)}
+                      routeOwner={routeOwner}
+                      item={item}
+                      currentPath={currentPath}
+                      onRename={handleRename}
+                      onDelete={setItemToDelete}
+                      onCreateInFolder={handleCreateInFolder}
+                      onCreateFolderInFolder={(item) =>
+                        openCreateFolderDialog(item.path)
+                      }
+                    />
+                  ))
+                )}
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
@@ -624,56 +908,100 @@ export function FileTree({
         <SidebarRail />
       </Sidebar>
 
-      {/* Dialog for Rename */}
-      <Dialog open={!!itemToRename} onOpenChange={(open) => !open && setItemToRename(null)}>
+      <Dialog open={Boolean(itemToRename)} onOpenChange={(open) => !open && setItemToRename(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Rename {itemToRename?.type === "dir" ? "Folder" : "File"}</DialogTitle>
+            <DialogTitle>Rename {itemToRename?.type === "dir" ? "folder" : "file"}</DialogTitle>
             <DialogDescription>
-              Enter a new name for this {itemToRename?.type === "dir" ? "folder" : "file"}.
+              The tree updates immediately and syncs in the background.
             </DialogDescription>
           </DialogHeader>
-          <div className="py-4">
-            <Input
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  handleRenameSubmit();
-                }
-              }}
-              autoFocus
-            />
-          </div>
+          <Input
+            value={newName}
+            onChange={(event) => setNewName(event.target.value)}
+            placeholder="Enter a new name"
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                handleRenameSubmit();
+              }
+            }}
+          />
           <DialogFooter>
-            <Button variant="ghost" onClick={() => setItemToRename(null)} disabled={isRenaming}>
+            <Button variant="outline" onClick={() => setItemToRename(null)}>
               Cancel
             </Button>
-            <Button onClick={handleRenameSubmit} disabled={isRenaming || !newName || newName === itemToRename?.name}>
-              Rename
+            <Button onClick={handleRenameSubmit}>Rename</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(itemToDelete)} onOpenChange={(open) => !open && setItemToDelete(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete {itemToDelete?.type === "dir" ? "folder" : "file"}?</DialogTitle>
+            <DialogDescription>
+              The item disappears immediately and the delete syncs in the background.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setItemToDelete(null)}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleDeleteSubmit}>
+              Delete
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Dialog for Delete Confirmation */}
-      <Dialog open={!!itemToDelete} onOpenChange={(open) => !open && setItemToDelete(null)}>
+      <Dialog
+        open={folderDialogOpen}
+        onOpenChange={(open) => {
+          setFolderDialogOpen(open);
+          if (!open) {
+            setFolderParentPath(null);
+            setFolderName("");
+          }
+        }}
+      >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Delete {itemToDelete?.type === "dir" ? "Folder" : "File"}</DialogTitle>
+            <DialogTitle>Create folder</DialogTitle>
             <DialogDescription>
-              Are you sure you want to delete <strong>{itemToDelete?.name}</strong>?
-              {itemToDelete?.type === "dir" && " This will remove all files and folders inside it."}
+              The folder appears immediately and syncs to GitHub in the background.
             </DialogDescription>
           </DialogHeader>
+          <div className="space-y-2">
+            {folderParentPath ? (
+              <p className="text-xs text-muted-foreground">
+                Parent: <span className="font-mono">{folderParentPath}</span>
+              </p>
+            ) : (
+              <p className="text-xs text-muted-foreground">Parent: workspace root</p>
+            )}
+            <Input
+              value={folderName}
+              onChange={(event) => setFolderName(event.target.value)}
+              placeholder="Enter a folder name"
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  handleCreateFolderSubmit();
+                }
+              }}
+            />
+          </div>
           <DialogFooter>
-            <Button variant="ghost" onClick={() => setItemToDelete(null)} disabled={isDeleting}>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setFolderDialogOpen(false);
+                setFolderParentPath(null);
+                setFolderName("");
+              }}
+            >
               Cancel
             </Button>
-            <Button variant="destructive" onClick={handleDeleteSubmit} disabled={isDeleting}>
-              Delete
-            </Button>
+            <Button onClick={handleCreateFolderSubmit}>Create Folder</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

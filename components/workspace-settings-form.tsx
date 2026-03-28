@@ -1,14 +1,18 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useState, useTransition } from "react";
-import { Database, HardDriveDownload, Loader2 } from "lucide-react";
+import { Database, HardDriveDownload } from "lucide-react";
 import { toast } from "sonner";
 
 import { updateWorkspacePersistenceModeAction } from "@/app/workspace/actions";
 import { Switch } from "@/components/ui/switch";
 import { type WorkspacePersistenceMode } from "@/lib/workspace";
 import { cn } from "@/lib/utils";
+import {
+  useOptimisticMutation,
+  useWorkspacePreferencesQuery,
+  workspaceKeys,
+} from "@/lib/workspace-query";
 
 type SettingsCardProps = {
   mode: WorkspacePersistenceMode;
@@ -30,9 +34,7 @@ function PreferenceCard({
     <div
       className={cn(
         "rounded-2xl border bg-card p-5 transition-colors",
-        active
-          ? "border-primary/30"
-          : "border-border"
+        active ? "border-primary/30" : "border-border"
       )}
     >
       <div className="flex items-start gap-3">
@@ -59,32 +61,79 @@ export function WorkspaceSettingsForm({
   mode,
   currentOwner,
 }: SettingsCardProps) {
-  const [isDatabaseMode, setIsDatabaseMode] = useState(mode === "database");
-  const [isPending, startTransition] = useTransition();
+  const preferencesQuery = useWorkspacePreferencesQuery({
+    initialData: {
+      persistenceMode: mode,
+      currentOwner,
+      pending: false,
+      optimistic: false,
+      syncError: null,
+    },
+  });
+  const preferences = preferencesQuery.data;
+  const isDatabaseMode = preferences?.persistenceMode === "database";
 
-  const nextMode: WorkspacePersistenceMode = isDatabaseMode
-    ? "database"
-    : "cookie";
+  const savePreference = useOptimisticMutation<
+    { persistenceMode: WorkspacePersistenceMode; currentOwner: string | null },
+    { mode: WorkspacePersistenceMode },
+    { previousMode: WorkspacePersistenceMode }
+  >({
+    mutationFn: async ({ mode: nextMode }) =>
+      updateWorkspacePersistenceModeAction(nextMode, preferences?.currentOwner ?? null),
+    getQueryKeys: () => [workspaceKeys.preferences()],
+    applyOptimisticUpdate: (queryClient, variables) => {
+      const previousMode = preferences?.persistenceMode ?? mode;
+      queryClient.setQueryData(workspaceKeys.preferences(), {
+        persistenceMode: variables.mode,
+        currentOwner: preferences?.currentOwner ?? currentOwner,
+        pending: true,
+        optimistic: true,
+        syncError: null,
+      });
+
+      return {
+        previousMode,
+      };
+    },
+    rollback: (queryClient, _variables, _error, state) => {
+      queryClient.setQueryData(workspaceKeys.preferences(), {
+        persistenceMode: state.context.previousMode,
+        currentOwner: preferences?.currentOwner ?? currentOwner,
+        pending: false,
+        optimistic: false,
+        syncError: "Could not update workspace memory preference.",
+      });
+      toast.error("Could not update the workspace memory preference.");
+    },
+    onSuccess: (queryClient, data) => {
+      queryClient.setQueryData(workspaceKeys.preferences(), {
+        persistenceMode: data.persistenceMode,
+        currentOwner: data.currentOwner,
+        pending: false,
+        optimistic: false,
+        syncError: null,
+      });
+      toast.success(
+        data.persistenceMode === "database"
+          ? "Workspace memory now follows your account across devices."
+          : "Workspace memory is now stored only in this browser."
+      );
+    },
+    invalidate: async (queryClient) => {
+      await queryClient.invalidateQueries({
+        queryKey: workspaceKeys.preferences(),
+        exact: true,
+      });
+    },
+  });
 
   const handleModeChange = (checked: boolean) => {
-    setIsDatabaseMode(checked);
-    const selectedMode: WorkspacePersistenceMode = checked ? "database" : "cookie";
-
-    startTransition(async () => {
-      try {
-        await updateWorkspacePersistenceModeAction(selectedMode, currentOwner);
-        toast.success(
-          selectedMode === "database"
-            ? "Workspace memory now follows your account across devices."
-            : "Workspace memory is now stored only in this browser."
-        );
-      } catch (error) {
-        console.error(error);
-        setIsDatabaseMode(!checked);
-        toast.error("Could not update the workspace memory preference.");
-      }
+    savePreference.mutate({
+      mode: checked ? "database" : "cookie",
     });
   };
+
+  const nextMode: WorkspacePersistenceMode = isDatabaseMode ? "database" : "cookie";
 
   return (
     <div className="mx-auto max-w-2xl space-y-4">
@@ -104,18 +153,26 @@ export function WorkspaceSettingsForm({
                 {nextMode === "database" ? "Database per user" : "Cookie only"}
               </span>
             </p>
+            <p
+              className={cn(
+                "text-xs",
+                preferences?.syncError ? "text-destructive" : "text-muted-foreground"
+              )}
+            >
+              {preferences?.pending
+                ? "Saving preference…"
+                : preferences?.syncError
+                  ? preferences.syncError
+                  : "Changes sync in the background without blocking the switch."}
+            </p>
           </div>
 
           <div className="flex items-center gap-3 rounded-xl border border-border bg-background px-4 py-3">
-            {isPending ? (
-              <Loader2 className="size-4 animate-spin text-primary" />
-            ) : (
-              <Switch
-                checked={isDatabaseMode}
-                onCheckedChange={handleModeChange}
-                aria-label="Toggle database workspace memory"
-              />
-            )}
+            <Switch
+              checked={Boolean(isDatabaseMode)}
+              onCheckedChange={handleModeChange}
+              aria-label="Toggle database workspace memory"
+            />
             <div className="text-sm">
               <p className="font-medium text-foreground">Use database memory</p>
               <p className="text-muted-foreground">Switch off for browser-only memory.</p>
@@ -132,7 +189,7 @@ export function WorkspaceSettingsForm({
           description="Remembers your last active workspace only in this browser. Fast, simple, and the default behavior."
         />
         <PreferenceCard
-          active={isDatabaseMode}
+          active={Boolean(isDatabaseMode)}
           icon={<Database className="size-5" />}
           title="Database per user"
           description="Stores your last active workspace with your account so `/workspace` follows you across browsers and devices."

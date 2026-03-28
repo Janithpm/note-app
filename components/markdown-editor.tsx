@@ -1,14 +1,27 @@
 "use client";
 
 import type { CSSProperties } from "react";
-import { useState, useMemo, useEffect, useRef } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import {
+  CircleAlert,
+  Edit3,
+  List,
+  Loader2,
+  Mic,
+  RefreshCcw,
+  Save,
+  X,
+} from "lucide-react";
 import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import rehypeSlug from "rehype-slug";
+import remarkGfm from "remark-gfm";
 import GithubSlugger from "github-slugger";
-import { Button } from "./ui/button";
-import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "./ui/resizable";
+import { toast } from "sonner";
+
+import { saveNoteAction } from "@/app/workspace/actions";
+import { Button } from "@/components/ui/button";
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import {
   Sidebar,
   SidebarContent,
@@ -20,12 +33,19 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarSeparator,
-} from "./ui/sidebar";
-import { Save, Loader2, Edit3, X, List, Mic } from "lucide-react";
-import { toast } from "sonner";
-import { saveNoteAction } from "@/app/workspace/actions";
-import { getWorkspaceBlobPath } from "@/lib/workspace";
-import { useRouter } from "next/navigation";
+} from "@/components/ui/sidebar";
+import {
+  getBaseName,
+  getParentPath,
+  restoreSnapshots,
+  setWorkspaceFileState,
+  type WorkspaceFileData,
+  upsertWorkspaceTreeItem,
+  useOptimisticMutation,
+  useWorkspaceFileQuery,
+  workspaceKeys,
+} from "@/lib/workspace-query";
+import { getWorkspaceBlobPath, getWorkspaceNewPath } from "@/lib/workspace";
 
 type TocHeading = {
   id: string;
@@ -59,28 +79,36 @@ type SpeechRecognitionLike = {
 type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
 
 type MarkdownEditorProps = {
-  initialContent: string;
-  sha?: string;
   routeOwner: string | null;
   path?: string;
+  initialPath?: string;
   isNew?: boolean;
 };
+
+type SaveMutationVariables = {
+  path: string;
+  content: string;
+  sha?: string;
+  isNew: boolean;
+};
+
+const NEW_NOTE_TEMPLATE = "# New Note\n\nStart typing here...";
 
 function extractTOC(content: string) {
   const slugger = new GithubSlugger();
   const headings: TocHeading[] = [];
-  const lines = content.split('\n');
-  
+  const lines = content.split("\n");
+
   const headingRegex = /^(#{1,3})\s+(.+)$/;
   let inCodeBlock = false;
-  
+
   for (const line of lines) {
-    if (line.trim().startsWith('```')) {
+    if (line.trim().startsWith("```")) {
       inCodeBlock = !inCodeBlock;
       continue;
     }
     if (inCodeBlock) continue;
-    
+
     const match = line.match(headingRegex);
     if (match) {
       const depth = match[1].length;
@@ -98,67 +126,232 @@ function processDictation(text: string) {
     "next line": "\n",
     "new paragraph": "\n\n",
     "next paragraph": "\n\n",
-    "comma": ",",
-    "period": ".",
+    comma: ",",
+    period: ".",
     "full stop": ".",
     "question mark": "?",
-    "exclamation mark": "!"
+    "exclamation mark": "!",
   };
 
   let processed = text;
   for (const [command, replacement] of Object.entries(commands)) {
-    const regex = new RegExp(`\\b${command}\\b`, 'gi');
+    const regex = new RegExp(`\\b${command}\\b`, "gi");
     processed = processed.replace(regex, replacement);
   }
 
-  // Cleanup unnecessary spaces around punctuation
-  processed = processed.replace(/\s+([.,?!])/g, '$1');
-  
-  // Capitalize beginnings of sentences and after punctuation
-  processed = processed.replace(/(^\s*|[.,?!]\n*\s*)([a-z])/g, (match, prefix, letter) => {
-    return prefix + letter.toUpperCase();
-  });
+  processed = processed.replace(/\s+([.,?!])/g, "$1");
+  processed = processed.replace(
+    /(^\s*|[.,?!]\n*\s*)([a-z])/g,
+    (match, prefix, letter) => prefix + letter.toUpperCase()
+  );
 
   return processed;
 }
 
+function EditorSyncStatus({
+  fileData,
+  isSaving,
+  onRetry,
+}: {
+  fileData?: WorkspaceFileData;
+  isSaving: boolean;
+  onRetry: () => void;
+}) {
+  if (isSaving || fileData?.pending) {
+    return (
+      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <Loader2 className="size-3.5 animate-spin" />
+        <span>Saving…</span>
+      </div>
+    );
+  }
+
+  if (fileData?.syncError) {
+    return (
+      <div className="flex items-center gap-2 text-xs text-destructive">
+        <CircleAlert className="size-3.5" />
+        <span>{fileData.syncError}</span>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 px-2 text-destructive hover:text-destructive"
+          onClick={onRetry}
+        >
+          <RefreshCcw className="mr-1 h-3.5 w-3.5" />
+          Retry
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="text-xs text-muted-foreground">
+      Changes save to GitHub in the background.
+    </div>
+  );
+}
+
 export function MarkdownEditor({
-  initialContent,
-  sha,
   routeOwner,
   path = "",
+  initialPath = "",
   isNew = false,
 }: MarkdownEditorProps) {
   const router = useRouter();
-  const [mode, setMode] = useState<'read' | 'edit'>(isNew ? 'edit' : 'read');
-  const [content, setContent] = useState(initialContent);
-  const [filePath, setFilePath] = useState(path || "");
-  const [isSaved, setIsSaved] = useState(false);
-
-  const { mutate: saveNote, isPending } = useMutation({
-    mutationFn: async () => {
-      return saveNoteAction(
-        routeOwner,
-        filePath,
-        content,
-        sha,
-        isNew ? `Create ${filePath}` : `Update ${filePath}`
-      );
-    },
-    onMutate: () => {
-      setIsSaved(true);
-      setTimeout(() => setIsSaved(false), 3000);
-    },
-    onError: (error) => {
-      console.error(error);
-      toast.error("Failed to save. Make sure your GitHub token has the required access scopes.");
-    }
-  });
-
+  const [mode, setMode] = useState<"read" | "edit">(isNew ? "edit" : "read");
+  const [draftContent, setDraftContent] = useState<string | null>(
+    isNew ? NEW_NOTE_TEMPLATE : null
+  );
+  const [draftPath, setDraftPath] = useState(initialPath);
   const [isListening, setIsListening] = useState(false);
-  const [interimTranscript, setInterimTranscript] = useState('');
+  const [interimTranscript, setInterimTranscript] = useState("");
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const ignoreNextFinalRef = useRef(false);
+  const fileContentRef = useRef("");
+
+  const fileQuery = useWorkspaceFileQuery(routeOwner, path, {
+    enabled: !isNew && Boolean(path),
+  });
+  const fileData = isNew ? undefined : fileQuery.data;
+  const filePath = isNew ? draftPath : path;
+  const content = isNew
+    ? draftContent ?? NEW_NOTE_TEMPLATE
+    : draftContent ?? fileData?.content ?? "";
+
+  useEffect(() => {
+    fileContentRef.current = fileData?.content ?? "";
+  }, [fileData?.content]);
+
+  const saveMutation = useOptimisticMutation<
+    { path: string; sha: string },
+    SaveMutationVariables,
+    { previousLocation: string | null; parentPath: string; isNew: boolean }
+  >({
+    mutationFn: async ({ path: nextPath, content: nextContent, sha, isNew: creating }) =>
+      saveNoteAction(
+        routeOwner,
+        nextPath,
+        nextContent,
+        sha,
+        creating ? `Create ${nextPath}` : `Update ${nextPath}`
+      ),
+    getQueryKeys: (_queryClient, variables) => [
+      workspaceKeys.file(routeOwner, variables.path),
+      workspaceKeys.tree(routeOwner, getParentPath(variables.path)),
+    ],
+    applyOptimisticUpdate: (queryClient, variables) => {
+      const parentPath = getParentPath(variables.path);
+      const optimisticFile: WorkspaceFileData = {
+        path: variables.path,
+        content: variables.content,
+        sha: variables.sha,
+        pending: true,
+        optimistic: true,
+        syncError: null,
+      };
+
+      setWorkspaceFileState(queryClient, routeOwner, variables.path, optimisticFile);
+
+      upsertWorkspaceTreeItem(queryClient, routeOwner, {
+        name: getBaseName(variables.path),
+        path: variables.path,
+        sha: variables.sha ?? `optimistic:${variables.path}`,
+        type: "file",
+        pending: true,
+        optimistic: true,
+        syncError: null,
+      });
+
+      let previousLocation: string | null = null;
+      if (variables.isNew) {
+        previousLocation = `${getWorkspaceNewPath(routeOwner)}${
+          parentPath ? `?folder=${encodeURIComponent(parentPath)}` : ""
+        }`;
+        router.push(getWorkspaceBlobPath(routeOwner, variables.path));
+      }
+
+      return {
+        previousLocation,
+        parentPath,
+        isNew: variables.isNew,
+      };
+    },
+    rollback: (queryClient, variables, _error, state) => {
+      if (state.context.isNew) {
+        restoreSnapshots(queryClient, state.snapshots);
+        if (state.context.previousLocation) {
+          router.push(state.context.previousLocation);
+        }
+        toast.error("Could not create the note.");
+        return;
+      }
+
+      const previousFile = state.snapshots.find(
+        (snapshot) =>
+          JSON.stringify(snapshot.queryKey) ===
+          JSON.stringify(workspaceKeys.file(routeOwner, variables.path))
+      )?.data as WorkspaceFileData | undefined;
+
+      setWorkspaceFileState(queryClient, routeOwner, variables.path, {
+        path: variables.path,
+        content: variables.content,
+        sha: previousFile?.sha ?? variables.sha,
+        pending: false,
+        optimistic: false,
+        syncError: "Sync failed. Your draft is still here.",
+      });
+
+      upsertWorkspaceTreeItem(queryClient, routeOwner, {
+        name: getBaseName(variables.path),
+        path: variables.path,
+        sha: previousFile?.sha ?? variables.sha ?? "",
+        type: "file",
+        pending: false,
+        optimistic: false,
+        syncError: "Save failed",
+      });
+
+      toast.error("Failed to sync changes. Retry when you’re ready.");
+    },
+    onSuccess: (queryClient, data, variables) => {
+      setWorkspaceFileState(queryClient, routeOwner, data.path, {
+        path: data.path,
+        content: variables.content,
+        sha: data.sha,
+        pending: false,
+        optimistic: false,
+        syncError: null,
+      });
+
+      upsertWorkspaceTreeItem(queryClient, routeOwner, {
+        name: getBaseName(data.path),
+        path: data.path,
+        sha: data.sha,
+        type: "file",
+        pending: false,
+        optimistic: false,
+        syncError: null,
+      });
+
+      if (variables.isNew) {
+        toast.success("New note created. Sync complete.");
+      } else {
+        toast.success("Changes synced to GitHub.");
+      }
+    },
+    invalidate: async (queryClient, variables) => {
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: workspaceKeys.file(routeOwner, variables.path),
+          exact: true,
+        }),
+        queryClient.invalidateQueries({
+          queryKey: workspaceKeys.tree(routeOwner, getParentPath(variables.path)),
+          exact: true,
+        }),
+      ]);
+    },
+  });
 
   useEffect(() => {
     let recognition: SpeechRecognitionLike | null = null;
@@ -173,47 +366,50 @@ export function MarkdownEditor({
       if (SpeechRecognition) {
         recognition = new SpeechRecognition();
         recognition.continuous = true;
-        recognition.interimResults = true; // Turn back on for real-time magic
-        recognition.lang = 'en-US';
+        recognition.interimResults = true;
+        recognition.lang = "en-US";
 
         recognition.onresult = (event: SpeechRecognitionEventLike) => {
-          let currentFinal = '';
-          let currentInterim = '';
-          
-          for (let i = event.resultIndex; i < event.results.length; ++i) {
-            if (event.results[i].isFinal) {
-              currentFinal += event.results[i][0].transcript + ' ';
+          let currentFinal = "";
+          let currentInterim = "";
+
+          for (let index = event.resultIndex; index < event.results.length; ++index) {
+            if (event.results[index].isFinal) {
+              currentFinal += event.results[index][0].transcript + " ";
             } else {
-              currentInterim += event.results[i][0].transcript;
+              currentInterim += event.results[index][0].transcript;
             }
           }
-          
+
           const processedFinal = processDictation(currentFinal);
           const processedInterim = processDictation(currentInterim);
-          
+
           if (processedFinal.trim()) {
             if (ignoreNextFinalRef.current) {
               ignoreNextFinalRef.current = false;
             } else {
-              setContent((prev) => {
-                const needsSpace = prev.length > 0 && !prev.endsWith(' ') && !prev.endsWith('\n');
-                return prev + (needsSpace ? ' ' : '') + processedFinal.trim();
+              setDraftContent((previous) => {
+                const base = previous ?? fileContentRef.current;
+                const needsSpace =
+                  base.length > 0 &&
+                  !base.endsWith(" ") &&
+                  !base.endsWith("\n");
+                return base + (needsSpace ? " " : "") + processedFinal.trim();
               });
             }
           }
-          
+
           setInterimTranscript(processedInterim);
         };
 
-        recognition.onerror = (event) => {
-          console.error("Speech recognition error:", event.error);
+        recognition.onerror = () => {
           setIsListening(false);
-          setInterimTranscript('');
+          setInterimTranscript("");
         };
 
         recognition.onend = () => {
           setIsListening(false);
-          setInterimTranscript('');
+          setInterimTranscript("");
         };
 
         recognitionRef.current = recognition;
@@ -232,45 +428,85 @@ export function MarkdownEditor({
   const toggleListening = () => {
     if (isListening) {
       recognitionRef.current?.stop();
-    } else {
-      if (!recognitionRef.current) {
-        alert("Voice typing is not supported in this browser. Try Chrome or Edge!");
-        return;
-      }
-      try {
-        recognitionRef.current.start();
-        setIsListening(true);
-      } catch (err) {
-        console.error(err);
-      }
+      return;
+    }
+
+    if (!recognitionRef.current) {
+      alert("Voice typing is not supported in this browser. Try Chrome or Edge.");
+      return;
+    }
+
+    try {
+      recognitionRef.current.start();
+      setIsListening(true);
+    } catch (error) {
+      console.error(error);
     }
   };
-  
+
   const handleSave = () => {
-    if (isNew && !filePath.trim()) {
-       toast.error("Please enter a file path, for example `docs/architecture.md`.");
-       return;
+    const nextPath = filePath.trim();
+
+    if (!nextPath) {
+      toast.error("Please enter a file path, for example `docs/architecture.md`.");
+      return;
     }
-    
-    // Optimistic UI updates
-    toast.success(isNew ? "New note saved to GitHub." : "Changes saved to GitHub.");
-    if (isNew) {
-       router.push(getWorkspaceBlobPath(routeOwner, filePath));
-    } else {
-       setMode('read');
+
+    if (saveMutation.isPending) {
+      return;
     }
-    
-    saveNote();
+
+    saveMutation.mutate({
+      path: nextPath,
+      content,
+      sha: fileData?.sha,
+      isNew,
+    });
   };
 
-  const hasUnsavedChanges = content !== initialContent;
+  const currentServerContent = fileData?.content ?? "";
+  const hasUnsavedChanges = isNew
+    ? Boolean(filePath.trim()) || content !== NEW_NOTE_TEMPLATE
+    : draftContent !== null && content !== currentServerContent;
   const toc = useMemo(() => extractTOC(content), [content]);
+  const needsSpace =
+    content.length > 0 && !content.endsWith(" ") && !content.endsWith("\n");
+  const displayValue =
+    content + (interimTranscript ? (needsSpace ? " " : "") + interimTranscript : "");
 
-  // Combine content and interim for realtime display
-  const needsSpace = content.length > 0 && !content.endsWith(' ') && !content.endsWith('\n');
-  const displayValue = content + (interimTranscript ? (needsSpace ? ' ' : '') + interimTranscript : '');
+  if (!isNew && fileQuery.isPending && !fileData) {
+    return (
+      <div className="flex h-full items-center justify-center p-6 text-center">
+        <div className="space-y-2">
+          <p className="text-sm font-medium text-foreground">Loading note…</p>
+          <p className="text-sm text-muted-foreground">
+            Using workspace cache when available and syncing in the background.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
-  if (mode === 'read') {
+  if (!isNew && fileQuery.isError && !fileData) {
+    return (
+      <div className="flex h-full items-center justify-center p-6 text-center">
+        <div className="max-w-md space-y-4">
+          <h2 className="text-xl font-semibold text-destructive">
+            Error loading file
+          </h2>
+          <p className="text-muted-foreground">
+            The file might be too large, not a text file, or no longer exists.
+          </p>
+          <Button variant="outline" onClick={() => fileQuery.refetch()}>
+            <RefreshCcw className="mr-2 h-4 w-4" />
+            Retry
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  if (mode === "read") {
     return (
       <div className="flex h-full min-h-0 w-full overflow-hidden bg-background">
         <div className="flex-1 overflow-y-auto px-6 py-8 md:px-8 md:py-10">
@@ -278,14 +514,27 @@ export function MarkdownEditor({
             <div className="mb-8 flex items-center justify-between gap-4 border-b pb-4">
               <div className="min-w-0">
                 <h1 className="truncate text-3xl font-bold tracking-tight text-foreground">
-                  {path.split('/').pop()}
+                  {getBaseName(filePath)}
                 </h1>
                 <div className="mt-1 truncate text-sm tracking-wide text-muted-foreground">
-                  {path}
+                  {filePath}
+                </div>
+                <div className="mt-2">
+                  <EditorSyncStatus
+                    fileData={fileData}
+                    isSaving={saveMutation.isPending}
+                    onRetry={handleSave}
+                  />
                 </div>
               </div>
-              <Button onClick={() => setMode('edit')} variant="outline" size="sm" className="hidden sm:flex">
-                <Edit3 className="mr-2 h-4 w-4" /> Edit Note
+              <Button
+                onClick={() => setMode("edit")}
+                variant="outline"
+                size="sm"
+                className="hidden sm:flex"
+              >
+                <Edit3 className="mr-2 h-4 w-4" />
+                Edit Note
               </Button>
             </div>
             <div className="prose prose-sm max-w-none text-foreground prose-a:text-primary prose-headings:text-foreground md:prose-base dark:prose-invert">
@@ -299,7 +548,7 @@ export function MarkdownEditor({
         <Sidebar
           side="right"
           collapsible="none"
-          className="hidden xl:flex border-l border-sidebar-border/70 bg-sidebar/55"
+          className="hidden border-l border-sidebar-border/70 bg-sidebar/55 xl:flex"
           style={{ "--sidebar-width": "18rem" } as CSSProperties}
         >
           <SidebarHeader className="gap-1 p-4">
@@ -335,13 +584,13 @@ export function MarkdownEditor({
                       </SidebarMenuButton>
                     </SidebarMenuItem>
                   ))}
-                  {toc.length === 0 && (
+                  {toc.length === 0 ? (
                     <SidebarMenuItem>
                       <div className="rounded-md border border-dashed border-sidebar-border/70 px-3 py-4 text-xs leading-relaxed text-sidebar-foreground/60">
                         No headings found. Add markdown headings to populate the table of contents.
                       </div>
                     </SidebarMenuItem>
-                  )}
+                  ) : null}
                 </SidebarMenu>
               </SidebarGroupContent>
             </SidebarGroup>
@@ -351,87 +600,115 @@ export function MarkdownEditor({
     );
   }
 
-  // Edit Mode
   return (
     <div className="flex h-full min-h-0 w-full flex-col">
-      <div className="flex items-center justify-between border-b px-4 py-2 bg-muted/20">
-        <div className="flex items-center gap-2 flex-1 mr-4 min-w-0">
-          {!isNew && (
-            <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground" onClick={() => setMode('read')} title="Close Editor">
+      <div className="flex items-center justify-between border-b bg-muted/20 px-4 py-2">
+        <div className="mr-4 flex min-w-0 flex-1 items-center gap-2">
+          {!isNew ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 text-muted-foreground"
+              onClick={() => setMode("read")}
+              title="Close Editor"
+            >
               <X className="h-4 w-4" />
             </Button>
-          )}
+          ) : null}
+
           {isNew ? (
-            <input 
+            <input
               value={filePath}
-              onChange={(e) => setFilePath(e.target.value)}
-              placeholder="e.g. docs/architecture.md (must end in .md)"
-              className="px-2 py-1 text-sm bg-background border rounded-md outline-none focus:border-primary w-full max-w-md font-mono"
+              onChange={(event) => setDraftPath(event.target.value)}
+              placeholder="e.g. docs/architecture.md"
+              className="w-full max-w-md rounded-md border bg-background px-2 py-1 font-mono text-sm outline-none focus:border-primary"
             />
           ) : (
-            <span className="text-sm font-medium text-muted-foreground truncate max-w-md">{path}</span>
+            <span className="max-w-md truncate text-sm font-medium text-muted-foreground">
+              {filePath}
+            </span>
           )}
-          {hasUnsavedChanges && !isNew && <span className="w-2 h-2 shrink-0 rounded-full bg-primary animate-pulse" title="Unsaved changes"></span>}
+
+          {hasUnsavedChanges ? (
+            <span
+              className="h-2 w-2 shrink-0 rounded-full bg-primary animate-pulse"
+              title="Unsaved changes"
+            />
+          ) : null}
         </div>
-        
+
         <div className="flex items-center gap-2">
-          <Button 
-            size="sm" 
-            variant="outline" 
+          <EditorSyncStatus
+            fileData={fileData}
+            isSaving={saveMutation.isPending}
+            onRetry={handleSave}
+          />
+          <Button
+            size="sm"
+            variant="outline"
             onClick={toggleListening}
-            className={`transition-all ${isListening ? 'border-primary text-primary bg-primary/10' : ''}`}
+            className={isListening ? "border-primary bg-primary/10 text-primary" : ""}
             title={isListening ? "Stop voice typing" : "Start voice typing"}
           >
             {isListening ? (
-              <><Mic className="h-4 w-4 mr-2 animate-pulse" /> Listening...</>
+              <>
+                <Mic className="mr-2 h-4 w-4 animate-pulse" />
+                Listening…
+              </>
             ) : (
-              <><Mic className="h-4 w-4 mr-2" /> Voice Type</>
+              <>
+                <Mic className="mr-2 h-4 w-4" />
+                Voice Type
+              </>
             )}
           </Button>
-
-          <Button 
-            size="sm" 
-            onClick={handleSave} 
-            disabled={isPending || (!hasUnsavedChanges && !isNew)}
-            variant={isSaved ? "secondary" : "default"}
-            className="transition-all"
+          <Button
+            size="sm"
+            onClick={handleSave}
+            disabled={!isNew && !hasUnsavedChanges}
           >
-            {isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
-            {isSaved ? "Saved to GitHub!" : "Save"}
+            {saveMutation.isPending ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Save className="mr-2 h-4 w-4" />
+            )}
+            Save
           </Button>
         </div>
       </div>
 
-      <ResizablePanelGroup {...{ direction: "horizontal" }} className="flex-1 min-h-0 border-t">
+      <ResizablePanelGroup
+        {...{ direction: "horizontal" }}
+        className="min-h-0 flex-1 border-t"
+      >
         <ResizablePanel defaultSize={50} minSize={20}>
-          <div className="h-full border-r focus-within:ring-1 focus-within:ring-primary/20 relative flex flex-col">
+          <div className="relative flex h-full flex-col border-r focus-within:ring-1 focus-within:ring-primary/20">
             <textarea
-            value={displayValue}
-            onChange={(e) => {
-              if (interimTranscript) {
-                // User interrupted dictation by typing manually
-                ignoreNextFinalRef.current = true;
-                if (recognitionRef.current) {
-                  try { recognitionRef.current.stop(); } catch {}
+              value={displayValue}
+              onChange={(event) => {
+                if (interimTranscript) {
+                  ignoreNextFinalRef.current = true;
+                  if (recognitionRef.current) {
+                    try {
+                      recognitionRef.current.stop();
+                    } catch {}
+                  }
+                  setIsListening(false);
+                  setInterimTranscript("");
                 }
-                setIsListening(false);
-                setInterimTranscript('');
-                setContent(e.target.value);
-              } else {
-                setContent(e.target.value);
-              }
-            }}
-            className="w-full flex-1 p-6 resize-none outline-none font-mono text-sm bg-background/50 leading-relaxed"
-            spellCheck={false}
-            placeholder="Type your markdown here..."
-          />
-        </div>
+                setDraftContent(event.target.value);
+              }}
+              className="w-full flex-1 resize-none bg-background/50 p-6 font-mono text-sm leading-relaxed outline-none"
+              spellCheck={false}
+              placeholder="Type your markdown here..."
+            />
+          </div>
         </ResizablePanel>
-        
+
         <ResizableHandle withHandle />
-        
+
         <ResizablePanel defaultSize={50} minSize={20}>
-          <div className="h-full overflow-y-auto p-8 bg-background prose prose-sm md:prose-base dark:prose-invert max-w-none text-foreground prose-headings:text-foreground prose-a:text-primary relative">
+          <div className="prose prose-sm relative h-full max-w-none overflow-y-auto bg-background p-8 text-foreground prose-a:text-primary prose-headings:text-foreground md:prose-base dark:prose-invert">
             <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSlug]}>
               {displayValue}
             </ReactMarkdown>

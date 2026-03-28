@@ -4,6 +4,7 @@ import { ArrowLeft, Settings2 } from "lucide-react";
 
 import { WorkspaceSettingsForm } from "@/components/workspace-settings-form";
 import { WorkspaceToast } from "@/components/workspace-toast";
+import { WorkspaceQueryHydration } from "@/components/workspace-query-hydration";
 import { auth } from "@/lib/auth";
 import { getWorkspaceOwners } from "@/lib/github";
 import {
@@ -61,10 +62,20 @@ export default async function WorkspaceSettingsPage() {
             </div>
           </div>
 
-          <WorkspaceSettingsForm
-            currentOwner={currentOwner}
-            mode={preferences.persistenceMode}
-          />
+          <WorkspaceQueryHydration
+            preferencesData={{
+              persistenceMode: preferences.persistenceMode,
+              currentOwner,
+              pending: false,
+              optimistic: false,
+              syncError: null,
+            }}
+          >
+            <WorkspaceSettingsForm
+              currentOwner={currentOwner}
+              mode={preferences.persistenceMode}
+            />
+          </WorkspaceQueryHydration>
            <Link
             href="/workspace"
             className="inline-flex items-center gap-2 rounded-xl border border-border bg-background px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted"

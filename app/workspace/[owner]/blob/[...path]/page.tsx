@@ -1,4 +1,5 @@
 import { MarkdownEditor } from "@/components/markdown-editor";
+import { WorkspaceQueryHydration } from "@/components/workspace-query-hydration";
 import { WorkspaceShell } from "@/components/workspace-shell";
 import { getWorkspaceShellData } from "@/lib/workspace-data";
 import { requireWorkspaceSession } from "@/lib/workspace-session";
@@ -33,24 +34,24 @@ export default async function OrganizationBlobPage({
   return (
     <WorkspaceShell userId={session.user.id} routeOwner={owner}>
       {fileData ? (
-        <div className="flex h-full min-h-0 flex-col">
-          <MarkdownEditor
-            initialContent={fileData.content}
-            path={filePath}
-            routeOwner={owner}
-            sha={fileData.sha}
-          />
-        </div>
-      ) : (
-        <div className="flex h-full items-center justify-center p-6 text-center">
-          <div className="max-w-md space-y-4">
-            <h2 className="text-xl font-semibold text-destructive">
-              Error loading file
-            </h2>
-            <p className="text-muted-foreground">
-              The file might be too large, not a text file, or no longer exists.
-            </p>
+        <WorkspaceQueryHydration
+          routeOwner={owner}
+          fileData={{
+            path: filePath,
+            content: fileData.content,
+            sha: fileData.sha,
+            pending: false,
+            optimistic: false,
+            syncError: null,
+          }}
+        >
+          <div className="flex h-full min-h-0 flex-col">
+            <MarkdownEditor path={filePath} routeOwner={owner} />
           </div>
+        </WorkspaceQueryHydration>
+      ) : (
+        <div className="flex h-full min-h-0 flex-col">
+          <MarkdownEditor path={filePath} routeOwner={owner} />
         </div>
       )}
     </WorkspaceShell>

@@ -48,9 +48,8 @@ function WorkspaceOptionRow({
     <button
       type="button"
       onClick={() => onSelect(owner)}
-      disabled={pending}
       className={cn(
-        "flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left transition-colors disabled:pointer-events-none disabled:opacity-70",
+        "flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left transition-colors",
         active ? "bg-accent text-accent-foreground" : "hover:bg-accent/70"
       )}
     >
@@ -131,19 +130,20 @@ export function WorkspaceSwitcher({
     setPendingOwnerSegment(owner.routeSegment);
 
     startTransition(async () => {
-      try {
-        beginWorkspaceTransition();
-        await rememberWorkspaceVisitAction(owner.routeSegment);
-        setOpen(false);
+      beginWorkspaceTransition();
+      setOpen(false);
 
-        if (owner.routeSegment === PERSONAL_WORKSPACE_SEGMENT) {
-          router.push(getWorkspaceBasePath(PERSONAL_WORKSPACE_SEGMENT));
-        } else {
-          router.push(getWorkspaceOwnerHref(owner));
-        }
+      if (owner.routeSegment === PERSONAL_WORKSPACE_SEGMENT) {
+        router.push(getWorkspaceBasePath(PERSONAL_WORKSPACE_SEGMENT));
+      } else {
+        router.push(getWorkspaceOwnerHref(owner));
+      }
+
+      try {
+        await rememberWorkspaceVisitAction(owner.routeSegment);
       } catch (error) {
         console.error(error);
-        toast.error("Could not switch workspace. Please try again.");
+        toast.error("Could not remember the selected workspace.");
       } finally {
         setPendingOwnerSegment(null);
       }
