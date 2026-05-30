@@ -1,12 +1,10 @@
 "use client";
 
-import type { CSSProperties } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   CircleAlert,
   Edit3,
-  List,
   Loader2,
   Mic,
   RefreshCcw,
@@ -22,19 +20,8 @@ import { toast } from "sonner";
 import { saveNoteAction } from "@/app/workspace/actions";
 import { Button } from "@/components/ui/button";
 import { NoteLoadingState } from "@/components/note-loading-state";
+import { NoteToc } from "@/components/note-toc";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
-import {
-  Sidebar,
-  SidebarContent,
-  SidebarGroup,
-  SidebarGroupContent,
-  SidebarGroupLabel,
-  SidebarHeader,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-  SidebarSeparator,
-} from "@/components/ui/sidebar";
 import {
   getBaseName,
   getParentPath,
@@ -535,7 +522,7 @@ export function MarkdownEditor({
 
   if (mode === "read") {
     return (
-      <div className="flex h-full min-h-0 w-full overflow-hidden bg-background">
+      <div className="relative flex h-full min-h-0 w-full overflow-hidden bg-background">
         <div className="flex-1 overflow-y-auto px-6 py-8 md:px-8 md:py-10">
           <div className="mx-auto flex w-full max-w-5xl flex-col">
             <div className="mb-8 flex items-center justify-between gap-4 border-b pb-4">
@@ -572,57 +559,7 @@ export function MarkdownEditor({
           </div>
         </div>
 
-        <Sidebar
-          side="right"
-          collapsible="none"
-          className="hidden border-l border-sidebar-border/70 bg-sidebar/55 xl:flex"
-          style={{ "--sidebar-width": "18rem" } as CSSProperties}
-        >
-          <SidebarHeader className="gap-1 p-4">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-sidebar-foreground/55">
-              Navigation
-            </p>
-            <div className="flex items-center gap-2 text-sm font-semibold text-sidebar-foreground">
-              <List className="h-4 w-4" />
-              <span>On this page</span>
-            </div>
-          </SidebarHeader>
-          <SidebarSeparator />
-          <SidebarContent>
-            <SidebarGroup className="pt-2">
-              <SidebarGroupLabel>Headings</SidebarGroupLabel>
-              <SidebarGroupContent>
-                <SidebarMenu>
-                  {toc.map((heading) => (
-                    <SidebarMenuItem key={heading.id}>
-                      <SidebarMenuButton
-                        asChild
-                        tooltip={heading.text}
-                        className="h-auto py-2"
-                      >
-                        <a
-                          href={`#${heading.id}`}
-                          style={{
-                            paddingLeft: `${(heading.depth - 1) * 0.75 + 0.5}rem`,
-                          }}
-                        >
-                          <span className="line-clamp-2">{heading.text}</span>
-                        </a>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  ))}
-                  {toc.length === 0 ? (
-                    <SidebarMenuItem>
-                      <div className="rounded-md border border-dashed border-sidebar-border/70 px-3 py-4 text-xs leading-relaxed text-sidebar-foreground/60">
-                        No headings found. Add markdown headings to populate the table of contents.
-                      </div>
-                    </SidebarMenuItem>
-                  ) : null}
-                </SidebarMenu>
-              </SidebarGroupContent>
-            </SidebarGroup>
-          </SidebarContent>
-        </Sidebar>
+        <NoteToc headings={toc} />
       </div>
     );
   }

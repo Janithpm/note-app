@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Plus, Search, Settings2 } from "lucide-react";
+import { Search } from "lucide-react";
 
 import {
   Breadcrumb,
@@ -12,14 +12,11 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
-import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { usePalette } from "@/components/palette-provider";
 import {
   getWorkspaceBasePath,
-  getWorkspaceNewPath,
-  getWorkspaceSettingsPath,
   type WorkspaceOwnerOption,
 } from "@/lib/workspace";
 
@@ -129,29 +126,18 @@ export function RepositoryHeader({
         </BreadcrumbList>
       </Breadcrumb>
 
-      <div className="ml-auto flex items-center gap-2">
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          onClick={() => palette.open()}
-          title="Search workspace"
-        >
-          <Search />
-          <span className="sr-only">Search workspace</span>
-        </Button>
-        <Button asChild variant="ghost" size="icon-sm" title="Workspace settings">
-          <Link href={getWorkspaceSettingsPath()}>
-            <Settings2 />
-            <span className="sr-only">Workspace settings</span>
-          </Link>
-        </Button>
-        <Button asChild size="sm" className="hidden sm:inline-flex">
-          <Link href={getWorkspaceNewPath(routeOwner)}>
-            <Plus />
-            <span>New note</span>
-          </Link>
-        </Button>
-      </div>
+      <button
+        type="button"
+        onClick={() => palette.open()}
+        title="Search workspace"
+        className="ml-auto flex shrink-0 items-center gap-2 rounded-md border border-border/60 bg-muted/40 px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+      >
+        <Search className="size-3.5" />
+        <span className="hidden sm:inline">Search</span>
+        <kbd className="hidden rounded bg-background/80 px-1 font-mono text-[10px] text-muted-foreground sm:inline">
+          ⌘K
+        </kbd>
+      </button>
     </header>
   );
 }
