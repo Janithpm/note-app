@@ -10,6 +10,7 @@ import {
   deleteFileContent,
   getFileContent,
   getOwnerLogin,
+  getRecursiveRepoTree,
   getRepositoryContents,
   renameDirectory,
   renameFileContent,
@@ -30,7 +31,10 @@ import {
   type WorkspaceFileData,
   type WorkspacePreferencesData,
 } from "@/lib/workspace-query";
-import { filterVisibleWorkspaceTreeItems } from "@/lib/workspace-tree";
+import {
+  filterVisibleWorkspaceTreeItems,
+  isVisibleWorkspaceTreeItemName,
+} from "@/lib/workspace-tree";
 
 async function getSessionUserId() {
   const session = await auth.api.getSession({
@@ -59,6 +63,45 @@ export async function fetchRepoContents(
   );
 
   return filterVisibleWorkspaceTreeItems(contents as Array<{ name: string }>);
+}
+
+export type WorkspaceTreeIndexEntry = {
+  path: string;
+  name: string;
+  type: "dir" | "file";
+};
+
+/**
+ * Returns the entire workspace file tree as a flat list, fetched in one recursive
+ * GitHub call. Powers the command-palette search index — fetched once per palette
+ * open and searched client-side, rather than listing each folder on demand.
+ */
+export async function fetchWorkspaceTreeIndexAction(
+  routeOwner: string | null
+): Promise<{ entries: WorkspaceTreeIndexEntry[]; truncated: boolean }> {
+  const userId = await getSessionUserId();
+  const login = await getOwnerLogin(userId, routeOwner);
+
+  const { tree, truncated } = await getRecursiveRepoTree(
+    userId,
+    login,
+    WORKSPACE_REPO_NAME
+  );
+
+  const entries: WorkspaceTreeIndexEntry[] = [];
+  for (const entry of tree) {
+    const name = entry.path.split("/").filter(Boolean).pop() ?? entry.path;
+    if (!isVisibleWorkspaceTreeItemName(name)) {
+      continue;
+    }
+    entries.push({
+      path: entry.path,
+      name,
+      type: entry.type === "tree" ? "dir" : "file",
+    });
+  }
+
+  return { entries, truncated };
 }
 
 export async function fetchWorkspaceFileAction(

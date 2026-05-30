@@ -4,6 +4,7 @@ import * as React from "react";
 import { usePathname } from "next/navigation";
 
 import { getWorkspaceBlobPath } from "@/lib/workspace";
+import { recordRecentNote } from "@/lib/recent-notes";
 
 type DraftState = {
   /** Parent folder the new note will be created in ("" = workspace root). */
@@ -84,6 +85,10 @@ export function WorkspaceDraftProvider({
     (path: string) => {
       setDraft(null);
       setActiveNotePath(path);
+      // Record in recents (single chokepoint: tree clicks, palette, deep links
+      // all open notes via this callback). Not done in the popstate/pathname
+      // sync effects, so back/forward doesn't double-count.
+      recordRecentNote(routeOwner, path);
       // Update the URL without a Next navigation (no server round-trip), so the
       // pane swap is instant but the note stays deep-linkable / refreshable.
       if (typeof window !== "undefined") {

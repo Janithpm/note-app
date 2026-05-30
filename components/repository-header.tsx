@@ -15,23 +15,13 @@ import {
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { SidebarTrigger } from "@/components/ui/sidebar";
+import { usePalette } from "@/components/palette-provider";
 import {
   getWorkspaceBasePath,
   getWorkspaceNewPath,
   getWorkspaceSettingsPath,
   type WorkspaceOwnerOption,
 } from "@/lib/workspace";
-
-function openSearchPalette() {
-  document.dispatchEvent(
-    new KeyboardEvent("keydown", {
-      key: "k",
-      ctrlKey: true,
-      metaKey: true,
-      bubbles: true,
-    })
-  );
-}
 
 function getBreadcrumbData(
   pathname: string,
@@ -98,6 +88,7 @@ export function RepositoryHeader({
   routeOwner: string | null;
 }) {
   const pathname = usePathname();
+  const palette = usePalette();
   const { workspaceHref, contextLabel, pageLabel } = getBreadcrumbData(
     pathname,
     activeOwner,
@@ -142,7 +133,7 @@ export function RepositoryHeader({
         <Button
           variant="ghost"
           size="icon-sm"
-          onClick={openSearchPalette}
+          onClick={() => palette.open()}
           title="Search workspace"
         >
           <Search />

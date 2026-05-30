@@ -10,6 +10,7 @@ import {
   fetchRepoContents,
   fetchWorkspaceFileAction,
   fetchWorkspacePreferencesAction,
+  fetchWorkspaceTreeIndexAction,
 } from "@/app/workspace/actions";
 import {
   PERSONAL_WORKSPACE_SEGMENT,
@@ -105,6 +106,9 @@ export const workspaceKeys = {
   },
   file(routeOwner: string | null | undefined, path: string) {
     return [...workspaceKeys.owner(routeOwner), "file", normalizePath(path)] as const;
+  },
+  treeIndex(routeOwner: string | null | undefined) {
+    return [...workspaceKeys.owner(routeOwner), "tree-index"] as const;
   },
   preferences() {
     return ["workspace", "preferences"] as const;
@@ -236,6 +240,36 @@ export function getWorkspaceQueryKeysForPath(
     .map((entry) => entry.queryKey);
 }
 
+/**
+ * Flattens every cached tree listing (root + expanded folders) into a deduped
+ * item list for instant, local-first search. Reflects optimistic create/delete
+ * because it reads the live cache. Items are deduped by path; later cache entries
+ * win so the freshest data is kept.
+ */
+export function getWorkspaceTreeItemsFromCache(
+  queryClient: QueryClient,
+  routeOwner: string | null | undefined
+): WorkspaceTreeItem[] {
+  const byPath = new Map<string, WorkspaceTreeItem>();
+
+  for (const entry of getWorkspaceCacheEntries(queryClient, routeOwner)) {
+    if (entry.queryKey[2] !== "tree") {
+      continue;
+    }
+    const items = entry.data as WorkspaceTreeItem[] | undefined;
+    if (!Array.isArray(items)) {
+      continue;
+    }
+    for (const item of items) {
+      if (item?.path) {
+        byPath.set(item.path, item);
+      }
+    }
+  }
+
+  return [...byPath.values()];
+}
+
 export function useWorkspaceTreeQuery(
   routeOwner: string | null,
   path: string,
@@ -281,6 +315,23 @@ export function useWorkspacePreferencesQuery(
     queryFn: fetchWorkspacePreferencesAction,
     enabled: options?.enabled,
     initialData: options?.initialData,
+  });
+}
+
+/**
+ * Fetches the full recursive workspace tree (the search index). Enabled lazily
+ * (e.g. when the command palette opens) and kept fresh for 5 minutes so a single
+ * fetch serves the whole session.
+ */
+export function useWorkspaceTreeIndexQuery(
+  routeOwner: string | null,
+  options?: { enabled?: boolean }
+) {
+  return useQuery({
+    queryKey: workspaceKeys.treeIndex(routeOwner),
+    queryFn: () => fetchWorkspaceTreeIndexAction(routeOwner),
+    enabled: options?.enabled ?? false,
+    staleTime: 5 * 60 * 1000,
   });
 }
 

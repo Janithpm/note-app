@@ -33,6 +33,12 @@ type GitTreeEntry = {
   sha: string | null;
 };
 
+export type RepoTreeEntry = {
+  path: string;
+  type: "blob" | "tree";
+  sha: string | null;
+};
+
 function getErrorStatus(error: unknown) {
   if (
     typeof error === "object" &&
@@ -283,6 +289,50 @@ export async function getFileContent(
     content: decodedContent,
     sha: data.sha,
   };
+}
+
+/**
+ * Fetches the entire repository file tree in a single recursive call. Used to
+ * build the workspace search index — one request returns every path instead of
+ * listing each folder separately. `truncated` is true when GitHub caps the
+ * response (~100k entries / 7MB) and the tree is incomplete.
+ */
+export async function getRecursiveRepoTree(
+  userId: string,
+  owner: string,
+  repo: string
+): Promise<{ tree: RepoTreeEntry[]; truncated: boolean }> {
+  const octokit = await getOctokit(userId);
+
+  const { data: repoInfo } = await octokit.rest.repos.get({ owner, repo });
+  const branchName = repoInfo.default_branch;
+
+  const { data: branch } = await octokit.rest.repos.getBranch({
+    owner,
+    repo,
+    branch: branchName,
+  });
+
+  const { data: treeData } = await octokit.rest.git.getTree({
+    owner,
+    repo,
+    tree_sha: branch.commit.sha,
+    recursive: "true",
+  });
+
+  const tree: RepoTreeEntry[] = treeData.tree
+    .filter(
+      (entry): entry is typeof entry & { path: string; type: "blob" | "tree" } =>
+        typeof entry.path === "string" &&
+        (entry.type === "blob" || entry.type === "tree")
+    )
+    .map((entry) => ({
+      path: entry.path,
+      type: entry.type,
+      sha: entry.sha ?? null,
+    }));
+
+  return { tree, truncated: treeData.truncated ?? false };
 }
 
 export async function saveFileContent(
