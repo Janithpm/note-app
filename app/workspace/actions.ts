@@ -9,10 +9,10 @@ import {
   deleteDirectory,
   deleteFileContent,
   getFileContent,
+  getOwnerLogin,
   getRepositoryContents,
   renameDirectory,
   renameFileContent,
-  resolveWorkspaceOwner,
   saveFileContent,
 } from "@/lib/github";
 import {
@@ -24,8 +24,6 @@ import {
 import {
   type WorkspacePersistenceMode,
   WORKSPACE_REPO_NAME,
-  getWorkspaceBasePath,
-  getWorkspaceBlobPath,
   getWorkspaceSettingsPath,
 } from "@/lib/workspace";
 import {
@@ -51,15 +49,11 @@ export async function fetchRepoContents(
   path: string = ""
 ) {
   const userId = await getSessionUserId();
-  const workspace = await resolveWorkspaceOwner(userId, routeOwner);
-
-  if (!workspace.activeOwner) {
-    throw new Error("Workspace not available");
-  }
+  const login = await getOwnerLogin(userId, routeOwner);
 
   const contents = await getRepositoryContents(
     userId,
-    workspace.activeOwner.login,
+    login,
     WORKSPACE_REPO_NAME,
     path
   );
@@ -72,15 +66,11 @@ export async function fetchWorkspaceFileAction(
   path: string
 ): Promise<WorkspaceFileData> {
   const userId = await getSessionUserId();
-  const workspace = await resolveWorkspaceOwner(userId, routeOwner);
-
-  if (!workspace.activeOwner) {
-    throw new Error("Workspace not available");
-  }
+  const login = await getOwnerLogin(userId, routeOwner);
 
   const file = await getFileContent(
     userId,
-    workspace.activeOwner.login,
+    login,
     WORKSPACE_REPO_NAME,
     path
   );
@@ -121,15 +111,11 @@ export async function saveNoteAction(
   message: string
 ) {
   const userId = await getSessionUserId();
-  const workspace = await resolveWorkspaceOwner(userId, routeOwner);
-
-  if (!workspace.activeOwner) {
-    throw new Error("Workspace not available");
-  }
+  const login = await getOwnerLogin(userId, routeOwner);
 
   const result = await saveFileContent(
     userId,
-    workspace.activeOwner.login,
+    login,
     WORKSPACE_REPO_NAME,
     path,
     content,
@@ -137,10 +123,9 @@ export async function saveNoteAction(
     sha
   );
 
-  revalidatePath(getWorkspaceBlobPath(routeOwner, path));
-  revalidatePath(getWorkspaceBasePath(routeOwner));
-  revalidatePath("/workspace");
-
+  // No revalidatePath here: the client holds the authoritative optimistic state
+  // and reconciles via the returned SHA. Revalidating would force a refetch from
+  // GitHub's eventually-consistent content API and flicker the just-written item.
   return {
     path: result.content?.path ?? path,
     sha: result.content?.sha ?? sha ?? "",
@@ -154,23 +139,16 @@ export async function deleteFileAction(
   message: string
 ) {
   const userId = await getSessionUserId();
-  const workspace = await resolveWorkspaceOwner(userId, routeOwner);
-
-  if (!workspace.activeOwner) {
-    throw new Error("Workspace not available");
-  }
+  const login = await getOwnerLogin(userId, routeOwner);
 
   await deleteFileContent(
     userId,
-    workspace.activeOwner.login,
+    login,
     WORKSPACE_REPO_NAME,
     path,
     message,
     sha
   );
-
-  revalidatePath(getWorkspaceBasePath(routeOwner));
-  revalidatePath("/workspace");
 
   return {
     path,
@@ -185,25 +163,17 @@ export async function renameFileAction(
   message: string
 ) {
   const userId = await getSessionUserId();
-  const workspace = await resolveWorkspaceOwner(userId, routeOwner);
-
-  if (!workspace.activeOwner) {
-    throw new Error("Workspace not available");
-  }
+  const login = await getOwnerLogin(userId, routeOwner);
 
   await renameFileContent(
     userId,
-    workspace.activeOwner.login,
+    login,
     WORKSPACE_REPO_NAME,
     oldPath,
     newPath,
     message,
     sha
   );
-
-  revalidatePath(getWorkspaceBlobPath(routeOwner, newPath));
-  revalidatePath(getWorkspaceBasePath(routeOwner));
-  revalidatePath("/workspace");
 
   return {
     oldPath,
@@ -217,22 +187,15 @@ export async function deleteDirectoryAction(
   message: string
 ) {
   const userId = await getSessionUserId();
-  const workspace = await resolveWorkspaceOwner(userId, routeOwner);
-
-  if (!workspace.activeOwner) {
-    throw new Error("Workspace not available");
-  }
+  const login = await getOwnerLogin(userId, routeOwner);
 
   await deleteDirectory(
     userId,
-    workspace.activeOwner.login,
+    login,
     WORKSPACE_REPO_NAME,
     path,
     message
   );
-
-  revalidatePath(getWorkspaceBasePath(routeOwner));
-  revalidatePath("/workspace");
 
   return {
     path,
@@ -245,22 +208,15 @@ export async function createDirectoryAction(
   message: string
 ) {
   const userId = await getSessionUserId();
-  const workspace = await resolveWorkspaceOwner(userId, routeOwner);
-
-  if (!workspace.activeOwner) {
-    throw new Error("Workspace not available");
-  }
+  const login = await getOwnerLogin(userId, routeOwner);
 
   const result = await createDirectory(
     userId,
-    workspace.activeOwner.login,
+    login,
     WORKSPACE_REPO_NAME,
     path,
     message
   );
-
-  revalidatePath(getWorkspaceBasePath(routeOwner));
-  revalidatePath("/workspace");
 
   return {
     path: result.path,
@@ -275,23 +231,16 @@ export async function renameDirectoryAction(
   message: string
 ) {
   const userId = await getSessionUserId();
-  const workspace = await resolveWorkspaceOwner(userId, routeOwner);
-
-  if (!workspace.activeOwner) {
-    throw new Error("Workspace not available");
-  }
+  const login = await getOwnerLogin(userId, routeOwner);
 
   await renameDirectory(
     userId,
-    workspace.activeOwner.login,
+    login,
     WORKSPACE_REPO_NAME,
     oldPath,
     newPath,
     message
   );
-
-  revalidatePath(getWorkspaceBasePath(routeOwner));
-  revalidatePath("/workspace");
 
   return {
     oldPath,

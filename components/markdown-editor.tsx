@@ -21,6 +21,7 @@ import { toast } from "sonner";
 
 import { saveNoteAction } from "@/app/workspace/actions";
 import { Button } from "@/components/ui/button";
+import { NoteLoadingState } from "@/components/note-loading-state";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import {
   Sidebar,
@@ -83,6 +84,15 @@ type MarkdownEditorProps = {
   path?: string;
   initialPath?: string;
   isNew?: boolean;
+  /**
+   * When true, a saved draft stays in this editor (no navigation) and continues
+   * as a normal file editor for the saved path. Used by the inline draft host.
+   */
+  inline?: boolean;
+  /** Called once an inline draft has been saved (after it transitions in place). */
+  onCreated?: (path: string) => void;
+  /** Called when the user cancels/closes an in-place draft. */
+  onCancel?: () => void;
 };
 
 type SaveMutationVariables = {
@@ -196,8 +206,18 @@ export function MarkdownEditor({
   path = "",
   initialPath = "",
   isNew = false,
+  inline = false,
+  onCreated,
+  onCancel,
 }: MarkdownEditorProps) {
   const router = useRouter();
+  // After an inline draft is saved we keep editing it *in place* (no navigation)
+  // by remembering its real path here and treating the editor as a normal file
+  // editor for that path from then on.
+  const [savedPath, setSavedPath] = useState<string | null>(null);
+  const isNewDraft = isNew && savedPath === null;
+  const effectivePath = savedPath ?? path;
+
   const [mode, setMode] = useState<"read" | "edit">(isNew ? "edit" : "read");
   const [draftContent, setDraftContent] = useState<string | null>(
     isNew ? NEW_NOTE_TEMPLATE : null
@@ -209,12 +229,12 @@ export function MarkdownEditor({
   const ignoreNextFinalRef = useRef(false);
   const fileContentRef = useRef("");
 
-  const fileQuery = useWorkspaceFileQuery(routeOwner, path, {
-    enabled: !isNew && Boolean(path),
+  const fileQuery = useWorkspaceFileQuery(routeOwner, effectivePath, {
+    enabled: !isNewDraft && Boolean(effectivePath),
   });
-  const fileData = isNew ? undefined : fileQuery.data;
-  const filePath = isNew ? draftPath : path;
-  const content = isNew
+  const fileData = isNewDraft ? undefined : fileQuery.data;
+  const filePath = isNewDraft ? draftPath : effectivePath;
+  const content = isNewDraft
     ? draftContent ?? NEW_NOTE_TEMPLATE
     : draftContent ?? fileData?.content ?? "";
 
@@ -267,7 +287,27 @@ export function MarkdownEditor({
         previousLocation = `${getWorkspaceNewPath(routeOwner)}${
           parentPath ? `?folder=${encodeURIComponent(parentPath)}` : ""
         }`;
-        router.push(getWorkspaceBlobPath(routeOwner, variables.path));
+
+        if (inline) {
+          // Stay in place: transition this editor into editing the saved file
+          // (its content is already in the optimistic cache). No navigation, so
+          // the user keeps writing without any page flash.
+          setSavedPath(variables.path);
+          setDraftContent(null);
+          setMode("edit");
+          // Reflect the saved note in the URL without a Next navigation (which
+          // would remount and discard the editor). Keeps refresh/deep-link working.
+          if (typeof window !== "undefined") {
+            window.history.replaceState(
+              null,
+              "",
+              getWorkspaceBlobPath(routeOwner, variables.path)
+            );
+          }
+          onCreated?.(variables.path);
+        } else {
+          router.push(getWorkspaceBlobPath(routeOwner, variables.path));
+        }
       }
 
       return {
@@ -339,18 +379,9 @@ export function MarkdownEditor({
         toast.success("Changes synced to GitHub.");
       }
     },
-    invalidate: async (queryClient, variables) => {
-      await Promise.all([
-        queryClient.invalidateQueries({
-          queryKey: workspaceKeys.file(routeOwner, variables.path),
-          exact: true,
-        }),
-        queryClient.invalidateQueries({
-          queryKey: workspaceKeys.tree(routeOwner, getParentPath(variables.path)),
-          exact: true,
-        }),
-      ]);
-    },
+    // No invalidate: the optimistic cache + the real SHA patched in onSuccess are
+    // authoritative. Refetching here would hit GitHub's eventually-consistent
+    // content API and flicker the just-saved note.
   });
 
   useEffect(() => {
@@ -460,12 +491,12 @@ export function MarkdownEditor({
       path: nextPath,
       content,
       sha: fileData?.sha,
-      isNew,
+      isNew: isNewDraft,
     });
   };
 
   const currentServerContent = fileData?.content ?? "";
-  const hasUnsavedChanges = isNew
+  const hasUnsavedChanges = isNewDraft
     ? Boolean(filePath.trim()) || content !== NEW_NOTE_TEMPLATE
     : draftContent !== null && content !== currentServerContent;
   const toc = useMemo(() => extractTOC(content), [content]);
@@ -474,20 +505,11 @@ export function MarkdownEditor({
   const displayValue =
     content + (interimTranscript ? (needsSpace ? " " : "") + interimTranscript : "");
 
-  if (!isNew && fileQuery.isPending && !fileData) {
-    return (
-      <div className="flex h-full items-center justify-center p-6 text-center">
-        <div className="space-y-2">
-          <p className="text-sm font-medium text-foreground">Loading note…</p>
-          <p className="text-sm text-muted-foreground">
-            Using workspace cache when available and syncing in the background.
-          </p>
-        </div>
-      </div>
-    );
+  if (!isNewDraft && fileQuery.isPending && !fileData) {
+    return <NoteLoadingState path={filePath} />;
   }
 
-  if (!isNew && fileQuery.isError && !fileData) {
+  if (!isNewDraft && fileQuery.isError && !fileData) {
     return (
       <div className="flex h-full items-center justify-center p-6 text-center">
         <div className="max-w-md space-y-4">
@@ -604,7 +626,7 @@ export function MarkdownEditor({
     <div className="flex h-full min-h-0 w-full flex-col">
       <div className="flex items-center justify-between border-b bg-muted/20 px-4 py-2">
         <div className="mr-4 flex min-w-0 flex-1 items-center gap-2">
-          {!isNew ? (
+          {!isNewDraft ? (
             <Button
               variant="ghost"
               size="icon"
@@ -614,9 +636,19 @@ export function MarkdownEditor({
             >
               <X className="h-4 w-4" />
             </Button>
+          ) : onCancel ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 text-muted-foreground"
+              onClick={onCancel}
+              title="Discard draft"
+            >
+              <X className="h-4 w-4" />
+            </Button>
           ) : null}
 
-          {isNew ? (
+          {isNewDraft ? (
             <input
               value={filePath}
               onChange={(event) => setDraftPath(event.target.value)}
@@ -665,7 +697,7 @@ export function MarkdownEditor({
           <Button
             size="sm"
             onClick={handleSave}
-            disabled={!isNew && !hasUnsavedChanges}
+            disabled={!isNewDraft && !hasUnsavedChanges}
           >
             {saveMutation.isPending ? (
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />

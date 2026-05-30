@@ -9,6 +9,7 @@ import {
   CircleAlert,
   Edit2,
   File,
+  FilePlus,
   FileText,
   Folder,
   FolderPlus,
@@ -22,6 +23,7 @@ import {
   createDirectoryAction,
   deleteDirectoryAction,
   deleteFileAction,
+  fetchWorkspaceFileAction,
   renameDirectoryAction,
   renameFileAction,
 } from "@/app/workspace/actions";
@@ -45,6 +47,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
@@ -64,11 +67,11 @@ import {
   SidebarSeparator,
 } from "@/components/ui/sidebar";
 import { WorkspaceSwitcher } from "@/components/workspace-switcher";
+import { useWorkspaceDraft } from "@/components/workspace-draft-provider";
 import { cn } from "@/lib/utils";
 import {
   getWorkspaceBasePath,
   getWorkspaceBlobPath,
-  getWorkspaceNewPath,
   type WorkspaceOwnerOption,
 } from "@/lib/workspace";
 import {
@@ -171,28 +174,10 @@ function ItemActions({
   onCreateInFolder?: (item: WorkspaceTreeItem) => void;
   onCreateFolderInFolder?: (item: WorkspaceTreeItem) => void;
 }) {
+  const isDir = item.type === "dir";
+
   return (
     <>
-      {item.type === "dir" ? (
-        <SidebarMenuAction
-          showOnHover
-          className="right-16"
-          onClick={() => onCreateInFolder?.(item)}
-        >
-          <Plus />
-          <span className="sr-only">New Note</span>
-        </SidebarMenuAction>
-      ) : null}
-      {item.type === "dir" ? (
-        <SidebarMenuAction
-          showOnHover
-          className="right-12"
-          onClick={() => onCreateFolderInFolder?.(item)}
-        >
-          <FolderPlus />
-          <span className="sr-only">New Folder</span>
-        </SidebarMenuAction>
-      ) : null}
       {item.syncError ? (
         <SidebarMenuAction className="pointer-events-none right-8 opacity-100">
           <ItemSyncIndicator item={item} />
@@ -200,12 +185,30 @@ function ItemActions({
       ) : null}
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <SidebarMenuAction showOnHover>
+          <SidebarMenuAction
+            // Keep the trigger visible when there's a sync error so the user can
+            // still retry/delete a failed item; otherwise reveal on hover only.
+            showOnHover={!item.syncError}
+            className={item.syncError ? "right-2" : undefined}
+          >
             <MoreHorizontal />
-            <span className="sr-only">More</span>
+            <span className="sr-only">Actions</span>
           </SidebarMenuAction>
         </DropdownMenuTrigger>
-        <DropdownMenuContent side="right" align="start">
+        <DropdownMenuContent side="right" align="start" className="w-44">
+          {isDir ? (
+            <>
+              <DropdownMenuItem onClick={() => onCreateInFolder?.(item)}>
+                <FilePlus className="mr-2 h-4 w-4" />
+                New note
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => onCreateFolderInFolder?.(item)}>
+                <FolderPlus className="mr-2 h-4 w-4" />
+                New folder
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+            </>
+          ) : null}
           <DropdownMenuItem onClick={() => onRename(item)}>
             <Edit2 className="mr-2 h-4 w-4" />
             Rename
@@ -223,7 +226,7 @@ function ItemActions({
   );
 }
 
-function FileLink({
+const FileLink = React.memo(function FileLink({
   routeOwner,
   item,
   isActive,
@@ -238,6 +241,40 @@ function FileLink({
 } & FileTreeActionProps) {
   const isMarkdown = item.name.endsWith(".md") || item.name.endsWith(".mdx");
   const href = getWorkspaceBlobPath(routeOwner, item.path);
+  const queryClient = useQueryClient();
+  const { openNote } = useWorkspaceDraft();
+
+  // Warm the file content into the cache on hover/focus so clicking the row opens
+  // the note instantly instead of waiting on a GitHub round-trip. Skipped for
+  // optimistic/pending rows (no real content to fetch yet).
+  const prefetchFile = React.useCallback(() => {
+    if (item.pending || item.optimistic) {
+      return;
+    }
+
+    void queryClient.prefetchQuery({
+      queryKey: workspaceKeys.file(routeOwner, item.path),
+      queryFn: () => fetchWorkspaceFileAction(routeOwner, item.path),
+    });
+  }, [queryClient, routeOwner, item.path, item.pending, item.optimistic]);
+
+  const handleClick = (event: React.MouseEvent) => {
+    // Let the browser handle modified clicks (new tab/window) and non-left clicks.
+    if (
+      event.defaultPrevented ||
+      event.button !== 0 ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.shiftKey ||
+      event.altKey
+    ) {
+      return;
+    }
+    // Open the note via client-side state: the pane swaps instantly and shows the
+    // loading skeleton during the fetch, instead of a blocking server navigation.
+    event.preventDefault();
+    openNote(item.path);
+  };
 
   const handleKeyDown = (event: React.KeyboardEvent) => {
     if (event.key === "F2") {
@@ -258,10 +295,15 @@ function FileLink({
         isActive={isActive}
         tooltip={item.path}
         onKeyDown={handleKeyDown}
-        className={cn(sharedClassName, "pr-12")}
+        className={cn(sharedClassName, "pr-8")}
         style={getTreeRowStyle(depth)}
       >
-        <Link href={href}>
+        <Link
+          href={href}
+          onClick={handleClick}
+          onMouseEnter={prefetchFile}
+          onFocus={prefetchFile}
+        >
           {isMarkdown ? (
             <FileText className="text-primary/80" />
           ) : (
@@ -273,9 +315,9 @@ function FileLink({
       <ItemActions item={item} onRename={onRename} onDelete={onDelete} />
     </SidebarMenuItem>
   );
-}
+});
 
-function FolderNode({
+const FolderNode = React.memo(function FolderNode({
   routeOwner,
   item,
   currentPath,
@@ -321,7 +363,7 @@ function FolderNode({
       isActive={shouldBeOpen}
       tooltip={item.path}
       onKeyDown={handleKeyDown}
-      className={cn(item.pending && "opacity-80", "pr-18")}
+      className={cn(item.pending && "opacity-80", "pr-8")}
       style={getTreeRowStyle(depth)}
     >
       <ChevronRight
@@ -376,9 +418,9 @@ function FolderNode({
       </Collapsible>
     </SidebarMenuItem>
   );
-}
+});
 
-function FileNode({
+const FileNode = React.memo(function FileNode({
   routeOwner,
   item,
   currentPath,
@@ -419,7 +461,7 @@ function FileNode({
       onCreateFolderInFolder={onCreateFolderInFolder}
     />
   );
-}
+});
 
 export function FileTree({
   routeOwner,
@@ -433,7 +475,10 @@ export function FileTree({
   const pathname = usePathname();
   const router = useRouter();
   const queryClient = useQueryClient();
-  const currentPath = getCurrentBlobPath(pathname);
+  const { openDraft, activeNotePath } = useWorkspaceDraft();
+  // Active-row highlight follows client-side note state (which updates instantly
+  // on click), falling back to the URL for the initial/deep-link case.
+  const currentPath = activeNotePath ?? getCurrentBlobPath(pathname);
   const rootQuery = useWorkspaceTreeQuery(routeOwner, "");
   const items = rootQuery.data ?? [];
 
@@ -529,6 +574,8 @@ export function FileTree({
         router.push(getWorkspaceBlobPath(routeOwner, nextCurrentPath));
       }
 
+      toast.success(`Renamed to ${nextName}`);
+
       return {
         previousLocation,
         newPath: nextPath,
@@ -564,23 +611,10 @@ export function FileTree({
           syncError: null,
         });
       }
-      toast.success("Rename queued. Syncing workspace…");
     },
-    invalidate: async (queryClient, _variables, _data, _error, state) => {
-      await Promise.all([
-        queryClient.invalidateQueries({
-          queryKey: workspaceKeys.tree(routeOwner, state.context.parentPath),
-          exact: true,
-        }),
-        ...getWorkspaceQueryKeysForPath(
-          queryClient,
-          routeOwner,
-          state.context.newPath
-        ).map((queryKey) =>
-          queryClient.invalidateQueries({ queryKey, exact: true })
-        ),
-      ]);
-    },
+    // No invalidate: the optimistic tree + caches are authoritative and the real
+    // state is patched in onSuccess. Refetching would hit GitHub's eventually-
+    // consistent API and flicker the renamed item.
   });
 
   const deleteMutation = useOptimisticMutation<
@@ -621,6 +655,8 @@ export function FileTree({
         router.push(getWorkspaceBasePath(routeOwner));
       }
 
+      toast.success(`Deleted ${item.name}`);
+
       return {
         previousLocation,
         parentPath,
@@ -638,15 +674,8 @@ export function FileTree({
         syncError: "Delete failed",
       });
     },
-    onSuccess: () => {
-      toast.success("Delete queued. Syncing workspace…");
-    },
-    invalidate: async (queryClient, _variables, _data, _error, state) => {
-      await queryClient.invalidateQueries({
-        queryKey: workspaceKeys.tree(routeOwner, state.context.parentPath),
-        exact: true,
-      });
-    },
+    // No onSuccess/invalidate: removal is already reflected optimistically and
+    // a refetch would race GitHub's eventual consistency.
   });
 
   const createFolderMutation = useOptimisticMutation<
@@ -695,6 +724,8 @@ export function FileTree({
       });
       queryClient.setQueryData(workspaceKeys.tree(routeOwner, newPath), []);
 
+      toast.success(`Folder “${nextFolderName}” created`);
+
       return {
         parentPath,
         newPath,
@@ -705,31 +736,20 @@ export function FileTree({
       toast.error(error.message || "Failed to create folder.");
     },
     onSuccess: (queryClient, data) => {
+      // Clear the "syncing" marker once GitHub confirms; no toast/invalidate here
+      // so the user-perceived result stays the instant optimistic one.
       markWorkspaceTreeItemState(queryClient, routeOwner, data.path, {
         pending: false,
         optimistic: false,
         syncError: null,
       });
-      toast.success("Folder created. Syncing workspace…");
-    },
-    invalidate: async (queryClient, _variables, _data, _error, state) => {
-      await Promise.all([
-        queryClient.invalidateQueries({
-          queryKey: workspaceKeys.tree(routeOwner, state.context.parentPath),
-          exact: true,
-        }),
-        queryClient.invalidateQueries({
-          queryKey: workspaceKeys.tree(routeOwner, state.context.newPath),
-          exact: true,
-        }),
-      ]);
     },
   });
 
-  const handleRename = (item: WorkspaceTreeItem) => {
+  const handleRename = React.useCallback((item: WorkspaceTreeItem) => {
     setItemToRename(item);
     setNewName(item.name);
-  };
+  }, []);
 
   const handleRenameSubmit = () => {
     if (!itemToRename || !newName || newName === itemToRename.name) {
@@ -751,17 +771,25 @@ export function FileTree({
     deleteMutation.mutate({ item: itemToDelete });
   };
 
-  const handleCreateInFolder = (item: WorkspaceTreeItem) => {
-    router.push(
-      `${getWorkspaceNewPath(routeOwner)}?folder=${encodeURIComponent(item.path)}`
-    );
-  };
+  const handleCreateInFolder = React.useCallback(
+    (item: WorkspaceTreeItem) => {
+      openDraft(item.path);
+    },
+    [openDraft]
+  );
 
-  const openCreateFolderDialog = (parentPath: string) => {
+  const openCreateFolderDialog = React.useCallback((parentPath: string) => {
     setFolderDialogOpen(true);
     setFolderParentPath(parentPath);
     setFolderName("");
-  };
+  }, []);
+
+  const handleCreateFolderInFolder = React.useCallback(
+    (item: WorkspaceTreeItem) => {
+      openCreateFolderDialog(item.path);
+    },
+    [openCreateFolderDialog]
+  );
 
   const handleCreateFolderSubmit = () => {
     const trimmedName = folderName.trim();
@@ -811,11 +839,9 @@ export function FileTree({
               </SidebarMenuButton>
             </SidebarMenuItem>
             <SidebarMenuItem>
-              <SidebarMenuButton asChild isActive={pathname.endsWith("/new")}>
-                <Link href={getWorkspaceNewPath(routeOwner)}>
-                  <Plus />
-                  <span>New note</span>
-                </Link>
+              <SidebarMenuButton onClick={() => openDraft("")}>
+                <Plus />
+                <span>New note</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
           </SidebarMenu>
@@ -833,7 +859,7 @@ export function FileTree({
                   variant="ghost"
                   size="icon-sm"
                   title="Create file at root"
-                  onClick={() => router.push(getWorkspaceNewPath(routeOwner))}
+                  onClick={() => openDraft("")}
                 >
                   <Plus />
                   <span className="sr-only">Create file at root</span>
@@ -868,9 +894,7 @@ export function FileTree({
                       onRename={handleRename}
                       onDelete={setItemToDelete}
                       onCreateInFolder={handleCreateInFolder}
-                      onCreateFolderInFolder={(item) =>
-                        openCreateFolderDialog(item.path)
-                      }
+                      onCreateFolderInFolder={handleCreateFolderInFolder}
                     />
                   ))
                 )}
