@@ -3,9 +3,11 @@ import { ArrowLeft, CircleAlert } from "lucide-react";
 import { notFound } from "next/navigation";
 
 import { FileTree } from "@/components/file-tree";
+import { PaletteProvider } from "@/components/palette-provider";
 import { WorkspaceDraftProvider } from "@/components/workspace-draft-provider";
 import { WorkspaceEditorHost } from "@/components/workspace-editor-host";
 import { WorkspaceQueryHydration } from "@/components/workspace-query-hydration";
+import { WorkspaceTreeContextProvider } from "@/components/workspace-tree-context";
 import { RepositoryHeader } from "@/components/repository-header";
 import { SearchPalette } from "@/components/search-palette";
 import { WorkspaceToast } from "@/components/workspace-toast";
@@ -79,39 +81,47 @@ export async function WorkspaceShell({
     <>
       {warning ? <WorkspaceToast message={warning.message} /> : null}
       <WorkspaceVisitTracker routeOwner={workspace.activeOwner.routeSegment} />
-      <SearchPalette />
       <SidebarProvider defaultOpen>
         <WorkspaceQueryHydration
           routeOwner={workspace.activeOwner.routeSegment}
           treeData={initialData}
         >
-          <WorkspaceDraftProvider routeOwner={workspace.activeOwner.routeSegment}>
-            <FileTree
-              routeOwner={workspace.activeOwner.routeSegment}
-              activeOwner={workspace.activeOwner}
-              owners={workspace.owners}
-            />
-            <SidebarInset className="min-w-0">
-              <RepositoryHeader
-                activeOwner={workspace.activeOwner}
+          <PaletteProvider>
+            <WorkspaceTreeContextProvider>
+              <WorkspaceDraftProvider
                 routeOwner={workspace.activeOwner.routeSegment}
-              />
-              <div className="relative min-h-0 flex-1 overflow-hidden">
-                {errorTitle && errorDescription ? (
-                  <WorkspaceErrorState
-                    title={errorTitle}
-                    description={errorDescription}
-                  />
-                ) : (
-                  <WorkspaceEditorHost
+              >
+                <SearchPalette
+                  routeOwner={workspace.activeOwner.routeSegment}
+                />
+                <FileTree
+                  routeOwner={workspace.activeOwner.routeSegment}
+                  activeOwner={workspace.activeOwner}
+                  owners={workspace.owners}
+                />
+                <SidebarInset className="min-w-0">
+                  <RepositoryHeader
+                    activeOwner={workspace.activeOwner}
                     routeOwner={workspace.activeOwner.routeSegment}
-                  >
-                    {children}
-                  </WorkspaceEditorHost>
-                )}
-              </div>
-            </SidebarInset>
-          </WorkspaceDraftProvider>
+                  />
+                  <div className="relative min-h-0 flex-1 overflow-hidden">
+                    {errorTitle && errorDescription ? (
+                      <WorkspaceErrorState
+                        title={errorTitle}
+                        description={errorDescription}
+                      />
+                    ) : (
+                      <WorkspaceEditorHost
+                        routeOwner={workspace.activeOwner.routeSegment}
+                      >
+                        {children}
+                      </WorkspaceEditorHost>
+                    )}
+                  </div>
+                </SidebarInset>
+              </WorkspaceDraftProvider>
+            </WorkspaceTreeContextProvider>
+          </PaletteProvider>
         </WorkspaceQueryHydration>
       </SidebarProvider>
     </>

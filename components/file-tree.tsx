@@ -68,6 +68,8 @@ import {
 } from "@/components/ui/sidebar";
 import { WorkspaceSwitcher } from "@/components/workspace-switcher";
 import { useWorkspaceDraft } from "@/components/workspace-draft-provider";
+import { usePalette } from "@/components/palette-provider";
+import { useWorkspaceTreeContext } from "@/components/workspace-tree-context";
 import { cn } from "@/lib/utils";
 import {
   getWorkspaceBasePath,
@@ -128,17 +130,6 @@ function getTreeRowStyle(depth: number): React.CSSProperties {
 function getCurrentBlobPath(pathname: string) {
   const [, blobPath = ""] = pathname.split("/blob/");
   return decodeURIComponent(blobPath);
-}
-
-function openSearchPalette() {
-  document.dispatchEvent(
-    new KeyboardEvent("keydown", {
-      key: "k",
-      ctrlKey: true,
-      metaKey: true,
-      bubbles: true,
-    })
-  );
 }
 
 function ItemSyncIndicator({
@@ -332,10 +323,18 @@ const FolderNode = React.memo(function FolderNode({
   currentPath: string;
   depth?: number;
 } & FileTreeActionProps) {
+  const { revealTarget } = useWorkspaceTreeContext();
+  const isRevealAncestor =
+    revealTarget != null &&
+    (revealTarget.path === item.path ||
+      revealTarget.path.startsWith(`${item.path}/`));
   const shouldBeOpen =
-    currentPath === item.path || currentPath.startsWith(`${item.path}/`);
+    currentPath === item.path ||
+    currentPath.startsWith(`${item.path}/`) ||
+    isRevealAncestor;
 
   const [isOpen, setIsOpen] = React.useState(shouldBeOpen);
+  const rowRef = React.useRef<HTMLLIElement | null>(null);
   const childrenQuery = useWorkspaceTreeQuery(routeOwner, item.path, {
     enabled: isOpen,
   });
@@ -347,6 +346,14 @@ const FolderNode = React.memo(function FolderNode({
       setIsOpen(true);
     }
   }, [shouldBeOpen]);
+
+  // When this exact folder is the reveal target, scroll it into view. Keyed on
+  // the reveal nonce so repeated reveals of the same folder re-trigger.
+  React.useEffect(() => {
+    if (revealTarget?.path === item.path) {
+      rowRef.current?.scrollIntoView({ block: "nearest" });
+    }
+  }, [revealTarget?.path, revealTarget?.nonce, item.path]);
 
   const handleKeyDown = (event: React.KeyboardEvent) => {
     if (event.key === "F2") {
@@ -404,7 +411,7 @@ const FolderNode = React.memo(function FolderNode({
   );
 
   return (
-    <SidebarMenuItem>
+    <SidebarMenuItem ref={rowRef}>
       <Collapsible open={isOpen} onOpenChange={setIsOpen}>
         <CollapsibleTrigger asChild>{trigger}</CollapsibleTrigger>
         <ItemActions
@@ -476,6 +483,8 @@ export function FileTree({
   const router = useRouter();
   const queryClient = useQueryClient();
   const { openDraft, activeNotePath } = useWorkspaceDraft();
+  const palette = usePalette();
+  const { registerCreateFolderHandler } = useWorkspaceTreeContext();
   // Active-row highlight follows client-side note state (which updates instantly
   // on click), falling back to the URL for the initial/deep-link case.
   const currentPath = activeNotePath ?? getCurrentBlobPath(pathname);
@@ -611,10 +620,13 @@ export function FileTree({
           syncError: null,
         });
       }
+      queryClient.invalidateQueries({
+        queryKey: workspaceKeys.treeIndex(routeOwner),
+      });
     },
-    // No invalidate: the optimistic tree + caches are authoritative and the real
-    // state is patched in onSuccess. Refetching would hit GitHub's eventually-
-    // consistent API and flicker the renamed item.
+    // No tree/file invalidate: the optimistic tree + caches are authoritative and
+    // the real state is patched in onSuccess. Refetching would hit GitHub's
+    // eventually-consistent API and flicker the renamed item.
   });
 
   const deleteMutation = useOptimisticMutation<
@@ -674,8 +686,13 @@ export function FileTree({
         syncError: "Delete failed",
       });
     },
-    // No onSuccess/invalidate: removal is already reflected optimistically and
-    // a refetch would race GitHub's eventual consistency.
+    onSuccess: (queryClient) => {
+      // Removal is already reflected optimistically in the live cache; just mark
+      // the search index stale so deleted items drop from unexpanded-folder search.
+      queryClient.invalidateQueries({
+        queryKey: workspaceKeys.treeIndex(routeOwner),
+      });
+    },
   });
 
   const createFolderMutation = useOptimisticMutation<
@@ -743,6 +760,10 @@ export function FileTree({
         optimistic: false,
         syncError: null,
       });
+      // Mark the search index stale so it reflects the new folder on next open.
+      queryClient.invalidateQueries({
+        queryKey: workspaceKeys.treeIndex(routeOwner),
+      });
     },
   });
 
@@ -783,6 +804,13 @@ export function FileTree({
     setFolderParentPath(parentPath);
     setFolderName("");
   }, []);
+
+  // Expose the folder-creation dialog so the command palette can trigger it
+  // without duplicating the optimistic mutation/validation that lives here.
+  React.useEffect(() => {
+    registerCreateFolderHandler(openCreateFolderDialog);
+    return () => registerCreateFolderHandler(null);
+  }, [registerCreateFolderHandler, openCreateFolderDialog]);
 
   const handleCreateFolderInFolder = React.useCallback(
     (item: WorkspaceTreeItem) => {
@@ -833,7 +861,7 @@ export function FileTree({
         <SidebarHeader className="gap-3 p-3">
           <SidebarMenu>
             <SidebarMenuItem>
-              <SidebarMenuButton onClick={openSearchPalette}>
+              <SidebarMenuButton onClick={() => palette.open()}>
                 <Search />
                 <span>Search workspace</span>
               </SidebarMenuButton>
@@ -921,7 +949,7 @@ export function FileTree({
               variant="ghost"
               size="sm"
               className="justify-start text-sidebar-foreground/70 hover:text-sidebar-foreground"
-              onClick={openSearchPalette}
+              onClick={() => palette.open()}
             >
               <Search />
               <span>Press cmd/ctrl + K to search</span>

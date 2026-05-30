@@ -375,13 +375,18 @@ export function MarkdownEditor({
 
       if (variables.isNew) {
         toast.success("New note created. Sync complete.");
+        // New file: mark the search index stale so it appears in unexpanded-folder
+        // search on next palette open (live cache already has it immediately).
+        queryClient.invalidateQueries({
+          queryKey: workspaceKeys.treeIndex(routeOwner),
+        });
       } else {
         toast.success("Changes synced to GitHub.");
       }
     },
-    // No invalidate: the optimistic cache + the real SHA patched in onSuccess are
-    // authoritative. Refetching here would hit GitHub's eventually-consistent
-    // content API and flicker the just-saved note.
+    // No tree/file invalidate: the optimistic cache + the real SHA patched in
+    // onSuccess are authoritative. Refetching would hit GitHub's eventually-
+    // consistent content API and flicker the just-saved note.
   });
 
   useEffect(() => {
