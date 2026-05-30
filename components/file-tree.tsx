@@ -14,8 +14,7 @@ import {
   Folder,
   FolderPlus,
   MoreHorizontal,
-  Plus,
-  Search,
+  Settings2,
   Trash2,
 } from "lucide-react";
 
@@ -58,7 +57,6 @@ import {
   SidebarGroup,
   SidebarGroupContent,
   SidebarGroupLabel,
-  SidebarHeader,
   SidebarMenu,
   SidebarMenuAction,
   SidebarMenuButton,
@@ -68,12 +66,12 @@ import {
 } from "@/components/ui/sidebar";
 import { WorkspaceSwitcher } from "@/components/workspace-switcher";
 import { useWorkspaceDraft } from "@/components/workspace-draft-provider";
-import { usePalette } from "@/components/palette-provider";
 import { useWorkspaceTreeContext } from "@/components/workspace-tree-context";
 import { cn } from "@/lib/utils";
 import {
   getWorkspaceBasePath,
   getWorkspaceBlobPath,
+  getWorkspaceSettingsPath,
   type WorkspaceOwnerOption,
 } from "@/lib/workspace";
 import {
@@ -483,7 +481,6 @@ export function FileTree({
   const router = useRouter();
   const queryClient = useQueryClient();
   const { openDraft, activeNotePath } = useWorkspaceDraft();
-  const palette = usePalette();
   const { registerCreateFolderHandler } = useWorkspaceTreeContext();
   // Active-row highlight follows client-side note state (which updates instantly
   // on click), falling back to the URL for the initial/deep-link case.
@@ -858,52 +855,9 @@ export function FileTree({
   return (
     <>
       <Sidebar className="border-r border-sidebar-border/70">
-        <SidebarHeader className="gap-3 p-3">
-          <SidebarMenu>
-            <SidebarMenuItem>
-              <SidebarMenuButton onClick={() => palette.open()}>
-                <Search />
-                <span>Search workspace</span>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-            <SidebarMenuItem>
-              <SidebarMenuButton onClick={() => openDraft("")}>
-                <Plus />
-                <span>New note</span>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          </SidebarMenu>
-        </SidebarHeader>
-
-        <SidebarSeparator />
-
-        <SidebarContent>
+        <SidebarContent className="pt-2">
           <SidebarGroup className="pt-2">
-            <SidebarGroupLabel className="flex items-center justify-between gap-2">
-              <span>Workspace Tree</span>
-              <div className="flex items-center gap-1">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  title="Create file at root"
-                  onClick={() => openDraft("")}
-                >
-                  <Plus />
-                  <span className="sr-only">Create file at root</span>
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  title="Create folder at root"
-                  onClick={() => openCreateFolderDialog("")}
-                >
-                  <FolderPlus />
-                  <span className="sr-only">Create folder at root</span>
-                </Button>
-              </div>
-            </SidebarGroupLabel>
+            <SidebarGroupLabel>Workspace Tree</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
                 {showRootPlaceholder ? (
@@ -943,17 +897,20 @@ export function FileTree({
               <div className="min-w-0 flex-1">
                 <AuthButton />
               </div>
+              <div className="h-5 w-px shrink-0 bg-sidebar-border/70" />
+              <Button
+                asChild
+                variant="ghost"
+                size="icon"
+                title="Workspace settings"
+                className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
+              >
+                <Link href={getWorkspaceSettingsPath()}>
+                  <Settings2 className="h-4 w-4" />
+                  <span className="sr-only">Workspace settings</span>
+                </Link>
+              </Button>
             </div>
-
-            <Button
-              variant="ghost"
-              size="sm"
-              className="justify-start text-sidebar-foreground/70 hover:text-sidebar-foreground"
-              onClick={() => palette.open()}
-            >
-              <Search />
-              <span>Press cmd/ctrl + K to search</span>
-            </Button>
           </div>
         </SidebarFooter>
 
