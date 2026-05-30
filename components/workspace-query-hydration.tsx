@@ -19,6 +19,11 @@ type WorkspaceQueryHydrationProps = {
   children: React.ReactNode;
 };
 
+/**
+ * Seeds server-fetched workspace data into a dehydrated state and merges it into
+ * the shared QueryProvider client via HydrationBoundary, so the tree/file the
+ * server already fetched renders instantly without a client-side refetch.
+ */
 export function WorkspaceQueryHydration({
   routeOwner = null,
   treePath = "",

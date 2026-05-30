@@ -3,6 +3,8 @@ import { ArrowLeft, CircleAlert } from "lucide-react";
 import { notFound } from "next/navigation";
 
 import { FileTree } from "@/components/file-tree";
+import { WorkspaceDraftProvider } from "@/components/workspace-draft-provider";
+import { WorkspaceEditorHost } from "@/components/workspace-editor-host";
 import { WorkspaceQueryHydration } from "@/components/workspace-query-hydration";
 import { RepositoryHeader } from "@/components/repository-header";
 import { SearchPalette } from "@/components/search-palette";
@@ -83,27 +85,33 @@ export async function WorkspaceShell({
           routeOwner={workspace.activeOwner.routeSegment}
           treeData={initialData}
         >
-          <FileTree
-            routeOwner={workspace.activeOwner.routeSegment}
-            activeOwner={workspace.activeOwner}
-            owners={workspace.owners}
-          />
-          <SidebarInset className="min-w-0">
-            <RepositoryHeader
-              activeOwner={workspace.activeOwner}
+          <WorkspaceDraftProvider routeOwner={workspace.activeOwner.routeSegment}>
+            <FileTree
               routeOwner={workspace.activeOwner.routeSegment}
+              activeOwner={workspace.activeOwner}
+              owners={workspace.owners}
             />
-            <div className="relative min-h-0 flex-1 overflow-hidden">
-              {errorTitle && errorDescription ? (
-                <WorkspaceErrorState
-                  title={errorTitle}
-                  description={errorDescription}
-                />
-              ) : (
-                children
-              )}
-            </div>
-          </SidebarInset>
+            <SidebarInset className="min-w-0">
+              <RepositoryHeader
+                activeOwner={workspace.activeOwner}
+                routeOwner={workspace.activeOwner.routeSegment}
+              />
+              <div className="relative min-h-0 flex-1 overflow-hidden">
+                {errorTitle && errorDescription ? (
+                  <WorkspaceErrorState
+                    title={errorTitle}
+                    description={errorDescription}
+                  />
+                ) : (
+                  <WorkspaceEditorHost
+                    routeOwner={workspace.activeOwner.routeSegment}
+                  >
+                    {children}
+                  </WorkspaceEditorHost>
+                )}
+              </div>
+            </SidebarInset>
+          </WorkspaceDraftProvider>
         </WorkspaceQueryHydration>
       </SidebarProvider>
     </>

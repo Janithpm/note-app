@@ -3,13 +3,17 @@ import { Octokit } from "@octokit/rest";
 import { and, eq } from "drizzle-orm";
 
 import { db } from "./db";
-import { account } from "./db/schema";
+import { account, workspaceOwnerCache } from "./db/schema";
 import {
   PERSONAL_WORKSPACE_SEGMENT,
   WORKSPACE_REPO_NAME,
+  serializeWorkspaceOwner,
   type WorkspaceOwnerOption,
   type WorkspaceWarning,
 } from "./workspace";
+
+// How long a cached owner-login row stays fresh before we re-resolve it.
+const OWNER_LOGIN_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 type GitHubFileContent = {
   type: string;
@@ -175,6 +179,60 @@ export async function resolveWorkspaceOwner(
     ...workspaceOwners,
     activeOwner,
   };
+}
+
+/**
+ * Resolves the GitHub login for a (user, routeOwner) pair, caching the result in
+ * the database so mutating actions skip the 2-3 GitHub owner-resolution calls on
+ * every write. Falls back to {@link resolveWorkspaceOwner} on a cold/stale cache.
+ */
+export async function getOwnerLogin(
+  userId: string,
+  routeOwner: string | null
+): Promise<string> {
+  const routeSegment = serializeWorkspaceOwner(routeOwner);
+
+  const [cached] = await db
+    .select({
+      login: workspaceOwnerCache.login,
+      updatedAt: workspaceOwnerCache.updatedAt,
+    })
+    .from(workspaceOwnerCache)
+    .where(
+      and(
+        eq(workspaceOwnerCache.userId, userId),
+        eq(workspaceOwnerCache.routeSegment, routeSegment)
+      )
+    );
+
+  if (
+    cached &&
+    Date.now() - cached.updatedAt.getTime() < OWNER_LOGIN_CACHE_TTL_MS
+  ) {
+    return cached.login;
+  }
+
+  const workspace = await resolveWorkspaceOwner(userId, routeOwner);
+  if (!workspace.activeOwner) {
+    throw new Error("Workspace not available");
+  }
+
+  const login = workspace.activeOwner.login;
+
+  await db
+    .insert(workspaceOwnerCache)
+    .values({
+      userId,
+      routeSegment,
+      login,
+      updatedAt: new Date(),
+    })
+    .onConflictDoUpdate({
+      target: [workspaceOwnerCache.userId, workspaceOwnerCache.routeSegment],
+      set: { login, updatedAt: new Date() },
+    });
+
+  return login;
 }
 
 export async function getUserRepositories(userId: string) {

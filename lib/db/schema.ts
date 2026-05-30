@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, boolean } from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, boolean, primaryKey } from "drizzle-orm/pg-core";
 
 export const user = pgTable("user", {
 					id: text("id").primaryKey(),
@@ -47,3 +47,15 @@ export const verification = pgTable("verification", {
 					createdAt: timestamp("created_at"),
 					updatedAt: timestamp("updated_at")
 			});
+
+// Caches the resolved GitHub owner login for a (user, route segment) pair so
+// mutating server actions don't re-resolve the workspace owner (2-3 GitHub
+// calls) on every write. Refreshed lazily once the row is older than the TTL.
+export const workspaceOwnerCache = pgTable("workspace_owner_cache", {
+					userId: text("user_id").notNull().references(() => user.id),
+					routeSegment: text("route_segment").notNull(),
+					login: text("login").notNull(),
+					updatedAt: timestamp("updated_at").notNull(),
+			}, (table) => [
+					primaryKey({ columns: [table.userId, table.routeSegment] }),
+			]);
