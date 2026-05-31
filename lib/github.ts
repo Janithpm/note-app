@@ -630,3 +630,51 @@ export function getWorkspaceWarningFromRepoError(
 
   return null;
 }
+
+export type RepoCodeSearchMatch = {
+  path: string;
+  /** First text-match fragment from GitHub, or null when none was returned. */
+  fragment: string | null;
+};
+
+/**
+ * Searches the contents of Markdown files in the workspace repo via GitHub's
+ * code-search index. Returns matching paths plus a text-match fragment for a
+ * snippet. Caller is responsible for gating on connectivity / query length.
+ *
+ * Notes:
+ * - GitHub only indexes the default branch and may lag for brand-new repos.
+ * - Rate limit is ~10 req/min (authenticated); callers must debounce.
+ * - Returns [] (never throws) on any API/rate-limit error so search degrades to
+ *   local-only rather than breaking the palette.
+ */
+export async function searchRepoCode(
+  userId: string,
+  owner: string,
+  repo: string,
+  query: string
+): Promise<RepoCodeSearchMatch[]> {
+  const trimmed = query.trim();
+  if (!trimmed) return [];
+
+  try {
+    const octokit = await getOctokit(userId);
+    const { data } = await octokit.rest.search.code({
+      q: `${trimmed} repo:${owner}/${repo} extension:md`,
+      per_page: 20,
+      // Ask for text-match metadata so we get snippet fragments.
+      headers: { accept: "application/vnd.github.text-match+json" },
+    });
+
+    return data.items.map((item) => {
+      const textMatches = (item as { text_matches?: { fragment?: string }[] })
+        .text_matches;
+      return {
+        path: item.path,
+        fragment: textMatches?.[0]?.fragment?.trim() ?? null,
+      };
+    });
+  } catch {
+    return [];
+  }
+}

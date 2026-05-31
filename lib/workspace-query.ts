@@ -11,6 +11,8 @@ import {
   fetchWorkspaceFileAction,
   fetchWorkspacePreferencesAction,
   fetchWorkspaceTreeIndexAction,
+  searchWorkspaceCodeAction,
+  type WorkspaceCodeSearchResult,
 } from "@/app/workspace/actions";
 import {
   PERSONAL_WORKSPACE_SEGMENT,
@@ -109,6 +111,9 @@ export const workspaceKeys = {
   },
   treeIndex(routeOwner: string | null | undefined) {
     return [...workspaceKeys.owner(routeOwner), "tree-index"] as const;
+  },
+  codeSearch(routeOwner: string | null | undefined, query: string) {
+    return [...workspaceKeys.owner(routeOwner), "code-search", query] as const;
   },
   preferences() {
     return ["workspace", "preferences"] as const;
@@ -270,6 +275,32 @@ export function getWorkspaceTreeItemsFromCache(
   return [...byPath.values()];
 }
 
+/**
+ * Collects every cached note body (file query) for the owner — the corpus for
+ * local, offline content search. Reads the live cache (which the IDB persister
+ * has already hydrated on load), so it covers notes opened this session or any
+ * prior one. Deduped by path; pending/optimistic files are included so you can
+ * search a draft you just typed.
+ */
+export function getWorkspaceFilesFromCache(
+  queryClient: QueryClient,
+  routeOwner: string | null | undefined
+): WorkspaceFileData[] {
+  const byPath = new Map<string, WorkspaceFileData>();
+
+  for (const entry of getWorkspaceCacheEntries(queryClient, routeOwner)) {
+    if (entry.queryKey[2] !== "file") {
+      continue;
+    }
+    const file = entry.data as WorkspaceFileData | undefined;
+    if (file?.path && typeof file.content === "string") {
+      byPath.set(file.path, file);
+    }
+  }
+
+  return [...byPath.values()];
+}
+
 export function useWorkspaceTreeQuery(
   routeOwner: string | null,
   path: string,
@@ -332,6 +363,32 @@ export function useWorkspaceTreeIndexQuery(
     queryFn: () => fetchWorkspaceTreeIndexAction(routeOwner),
     enabled: options?.enabled ?? false,
     staleTime: 5 * 60 * 1000,
+  });
+}
+
+export const CODE_SEARCH_MIN_QUERY_LENGTH = 3;
+
+/**
+ * Remote content search via GitHub's code-search index — the online half of
+ * hybrid content search. Gated by the caller (`enabled`) on connectivity, the
+ * palette being open, and a minimum query length to respect the ~10 req/min
+ * rate limit. Cached briefly per query; retry is off so a rate-limit response
+ * isn't hammered.
+ */
+export function useWorkspaceCodeSearchQuery(
+  routeOwner: string | null,
+  query: string,
+  options?: { enabled?: boolean }
+) {
+  const trimmed = query.trim();
+  return useQuery<WorkspaceCodeSearchResult[]>({
+    queryKey: workspaceKeys.codeSearch(routeOwner, trimmed),
+    queryFn: () => searchWorkspaceCodeAction(routeOwner, trimmed),
+    enabled:
+      (options?.enabled ?? true) &&
+      trimmed.length >= CODE_SEARCH_MIN_QUERY_LENGTH,
+    staleTime: 30 * 1000,
+    retry: false,
   });
 }
 

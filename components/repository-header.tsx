@@ -15,6 +15,8 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { usePalette } from "@/components/palette-provider";
+import { SyncStatusIndicator } from "@/components/sync-status-indicator";
+import { InstallButton } from "@/components/install-button";
 import {
   getWorkspaceBasePath,
   type WorkspaceOwnerOption,
@@ -126,11 +128,16 @@ export function RepositoryHeader({
         </BreadcrumbList>
       </Breadcrumb>
 
+      <div className="ml-auto flex shrink-0 items-center gap-1">
+        <SyncStatusIndicator />
+        <InstallButton />
+      </div>
+
       <button
         type="button"
         onClick={() => palette.open()}
         title="Search workspace"
-        className="ml-auto flex shrink-0 items-center gap-2 rounded-md border border-border/60 bg-muted/40 px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        className="flex shrink-0 items-center gap-2 rounded-md border border-border/60 bg-muted/40 px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
       >
         <Search className="size-3.5" />
         <span className="hidden sm:inline">Search</span>

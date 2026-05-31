@@ -12,6 +12,7 @@ import {
   getOwnerLogin,
   getRecursiveRepoTree,
   getRepositoryContents,
+  searchRepoCode,
   renameDirectory,
   renameFileContent,
   saveFileContent,
@@ -104,6 +105,42 @@ export async function fetchWorkspaceTreeIndexAction(
   return { entries, truncated };
 }
 
+export type WorkspaceCodeSearchResult = {
+  path: string;
+  name: string;
+  /** Text-match fragment from GitHub, or null when none was provided. */
+  fragment: string | null;
+};
+
+/**
+ * Server-side content search over the workspace repo's Markdown files via
+ * GitHub's code-search index. Powers the "remote" half of hybrid content search
+ * — coverage for notes not in the local cache. Returns [] on error/rate-limit.
+ */
+export async function searchWorkspaceCodeAction(
+  routeOwner: string | null,
+  query: string
+): Promise<WorkspaceCodeSearchResult[]> {
+  const trimmed = query.trim();
+  if (trimmed.length < 3) return [];
+
+  const userId = await getSessionUserId();
+  const login = await getOwnerLogin(userId, routeOwner);
+
+  const matches = await searchRepoCode(
+    userId,
+    login,
+    WORKSPACE_REPO_NAME,
+    trimmed
+  );
+
+  return matches.map((match) => ({
+    path: match.path,
+    name: match.path.split("/").filter(Boolean).pop() ?? match.path,
+    fragment: match.fragment,
+  }));
+}
+
 export async function fetchWorkspaceFileAction(
   routeOwner: string | null,
   path: string
@@ -146,33 +183,70 @@ export async function fetchWorkspacePreferencesAction(): Promise<WorkspacePrefer
   };
 }
 
+export type SaveNoteResult =
+  | { ok: true; path: string; sha: string }
+  | { ok: false; reason: "conflict"; remoteSha?: string; remoteContent?: string }
+  | { ok: false; reason: "error"; message: string };
+
 export async function saveNoteAction(
   routeOwner: string | null,
   path: string,
   content: string,
   sha: string | undefined,
   message: string
-) {
+): Promise<SaveNoteResult> {
   const userId = await getSessionUserId();
   const login = await getOwnerLogin(userId, routeOwner);
 
-  const result = await saveFileContent(
-    userId,
-    login,
-    WORKSPACE_REPO_NAME,
-    path,
-    content,
-    message,
-    sha
-  );
+  try {
+    const result = await saveFileContent(
+      userId,
+      login,
+      WORKSPACE_REPO_NAME,
+      path,
+      content,
+      message,
+      sha
+    );
 
-  // No revalidatePath here: the client holds the authoritative optimistic state
-  // and reconciles via the returned SHA. Revalidating would force a refetch from
-  // GitHub's eventually-consistent content API and flicker the just-written item.
-  return {
-    path: result.content?.path ?? path,
-    sha: result.content?.sha ?? sha ?? "",
-  };
+    // No revalidatePath here: the client holds the authoritative optimistic state
+    // and reconciles via the returned SHA. Revalidating would force a refetch from
+    // GitHub's eventually-consistent content API and flicker the just-written item.
+    return {
+      ok: true,
+      path: result.content?.path ?? path,
+      sha: result.content?.sha ?? sha ?? "",
+    };
+  } catch (error) {
+    // GitHub returns 409 when the base SHA no longer matches HEAD — i.e. the
+    // file changed on the remote since this edit's base. Surface the remote
+    // version so the client can offer keep-mine / keep-remote.
+    const status = (error as { status?: number })?.status;
+    if (status === 409 || status === 422) {
+      try {
+        const remote = await getFileContent(
+          userId,
+          login,
+          WORKSPACE_REPO_NAME,
+          path
+        );
+        return {
+          ok: false,
+          reason: "conflict",
+          remoteSha: remote.sha,
+          remoteContent: remote.content,
+        };
+      } catch {
+        return { ok: false, reason: "conflict" };
+      }
+    }
+
+    return {
+      ok: false,
+      reason: "error",
+      message: error instanceof Error ? error.message : "Save failed",
+    };
+  }
 }
 
 export async function deleteFileAction(

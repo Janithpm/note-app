@@ -18,6 +18,10 @@ import GithubSlugger from "github-slugger";
 import { toast } from "sonner";
 
 import { saveNoteAction } from "@/app/workspace/actions";
+import { useQueryClient } from "@tanstack/react-query";
+import { queueSaveOffline, isNetworkError } from "@/lib/offline-sync";
+import { useOfflineSync } from "@/components/offline-sync-provider";
+import { useWorkspaceDraft } from "@/components/workspace-draft-provider";
 import { Button } from "@/components/ui/button";
 import { NoteLoadingState } from "@/components/note-loading-state";
 import { NoteToc } from "@/components/note-toc";
@@ -34,6 +38,9 @@ import {
   workspaceKeys,
 } from "@/lib/workspace-query";
 import { getWorkspaceBlobPath, getWorkspaceNewPath } from "@/lib/workspace";
+import { useDebouncedValue } from "@/lib/use-debounced-value";
+
+const AUTOSAVE_DELAY_MS = 1500;
 
 type TocHeading = {
   id: string;
@@ -87,6 +94,8 @@ type SaveMutationVariables = {
   content: string;
   sha?: string;
   isNew: boolean;
+  /** True for autosaves — suppresses the success toast to avoid spam. */
+  auto?: boolean;
 };
 
 const NEW_NOTE_TEMPLATE = "# New Note\n\nStart typing here...";
@@ -198,6 +207,10 @@ export function MarkdownEditor({
   onCancel,
 }: MarkdownEditorProps) {
   const router = useRouter();
+  const queryClient = useQueryClient();
+  const { reportConflict, hasPendingConflict, notifyQueueChanged } =
+    useOfflineSync();
+  const { openNote } = useWorkspaceDraft();
   // After an inline draft is saved we keep editing it *in place* (no navigation)
   // by remembering its real path here and treating the editor as a normal file
   // editor for that path from then on.
@@ -215,6 +228,9 @@ export function MarkdownEditor({
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const ignoreNextFinalRef = useRef(false);
   const fileContentRef = useRef("");
+  // Content of the most recent (auto or manual) save attempt, so autosave never
+  // re-fires for content that's already been sent.
+  const lastSavedContentRef = useRef<string | null>(null);
 
   const fileQuery = useWorkspaceFileQuery(routeOwner, effectivePath, {
     enabled: !isNewDraft && Boolean(effectivePath),
@@ -230,18 +246,67 @@ export function MarkdownEditor({
   }, [fileData?.content]);
 
   const saveMutation = useOptimisticMutation<
-    { path: string; sha: string },
+    { path: string; sha: string; queued?: boolean },
     SaveMutationVariables,
     { previousLocation: string | null; parentPath: string; isNew: boolean }
   >({
-    mutationFn: async ({ path: nextPath, content: nextContent, sha, isNew: creating }) =>
-      saveNoteAction(
+    mutationFn: async ({ path: nextPath, content: nextContent, sha, isNew: creating }) => {
+      const queuedResult = { path: nextPath, sha: sha ?? "", queued: true as const };
+      const pendingEntry = {
         routeOwner,
-        nextPath,
-        nextContent,
+        path: nextPath,
+        content: nextContent,
         sha,
-        creating ? `Create ${nextPath}` : `Update ${nextPath}`
-      ),
+        isNew: creating,
+        queuedAt: Date.now(),
+      };
+      const queue = async () => {
+        await queueSaveOffline(queryClient, pendingEntry);
+        notifyQueueChanged();
+      };
+
+      // Offline: don't even attempt the network. Queue and resolve as pending so
+      // the optimistic cache stays in place and the editor keeps working.
+      if (typeof navigator !== "undefined" && !navigator.onLine) {
+        await queue();
+        return queuedResult;
+      }
+
+      let result;
+      try {
+        result = await saveNoteAction(
+          routeOwner,
+          nextPath,
+          nextContent,
+          sha,
+          creating ? `Create ${nextPath}` : `Update ${nextPath}`
+        );
+      } catch (error) {
+        // Connection dropped mid-request: queue and let the sync provider retry.
+        if (isNetworkError(error)) {
+          await queue();
+          return queuedResult;
+        }
+        throw error;
+      }
+
+      if (result.ok) {
+        return { path: result.path, sha: result.sha };
+      }
+
+      if (result.reason === "conflict") {
+        // Queue the edit and hand the conflict to the app-level resolver UI.
+        await queue();
+        reportConflict({
+          entry: pendingEntry,
+          remoteSha: result.remoteSha,
+          remoteContent: result.remoteContent,
+        });
+        return queuedResult;
+      }
+
+      throw new Error(result.message);
+    },
     getQueryKeys: (_queryClient, variables) => [
       workspaceKeys.file(routeOwner, variables.path),
       workspaceKeys.tree(routeOwner, getParentPath(variables.path)),
@@ -293,7 +358,10 @@ export function MarkdownEditor({
           }
           onCreated?.(variables.path);
         } else {
-          router.push(getWorkspaceBlobPath(routeOwner, variables.path));
+          // Non-inline create (the standalone /new page): transition into the
+          // note in place via client-side routing instead of a full server
+          // navigation. openNote swaps the editor-host pane and pushes the URL.
+          openNote(variables.path);
         }
       }
 
@@ -341,6 +409,19 @@ export function MarkdownEditor({
       toast.error("Failed to sync changes. Retry when you’re ready.");
     },
     onSuccess: (queryClient, data, variables) => {
+      // Queued (offline / conflict) saves stay pending — the optimistic state is
+      // already in the cache and the sync provider will reconcile them later.
+      if (data.queued) {
+        if (!variables.auto) {
+          toast.info(
+            navigator.onLine
+              ? "Save queued — will sync shortly."
+              : "Saved offline. Will sync when you reconnect."
+          );
+        }
+        return;
+      }
+
       setWorkspaceFileState(queryClient, routeOwner, data.path, {
         path: data.path,
         content: variables.content,
@@ -367,7 +448,7 @@ export function MarkdownEditor({
         queryClient.invalidateQueries({
           queryKey: workspaceKeys.treeIndex(routeOwner),
         });
-      } else {
+      } else if (!variables.auto) {
         toast.success("Changes synced to GitHub.");
       }
     },
@@ -479,6 +560,7 @@ export function MarkdownEditor({
       return;
     }
 
+    lastSavedContentRef.current = content;
     saveMutation.mutate({
       path: nextPath,
       content,
@@ -486,6 +568,46 @@ export function MarkdownEditor({
       isNew: isNewDraft,
     });
   };
+
+  // Autosave: persist edits to existing files after a short pause in typing.
+  // New unsaved drafts are excluded — they need a deliberate first save (path +
+  // intent). Once an inline draft is saved it becomes a normal file editor
+  // (savedPath set, isNewDraft false), so autosave takes over from then on.
+  const debouncedContent = useDebouncedValue(content, AUTOSAVE_DELAY_MS);
+  useEffect(() => {
+    if (isNewDraft) return;
+    if (mode !== "edit") return;
+    if (draftContent === null) return; // nothing edited yet
+    if (saveMutation.isPending) return;
+    // Pause while a conflict for this file awaits the user's decision — retrying
+    // with the same stale sha would just 409 again.
+    if (hasPendingConflict(routeOwner, effectivePath)) return;
+    // Skip if unchanged vs. what's on the server or vs. our last save attempt.
+    if (debouncedContent === (fileData?.content ?? "")) return;
+    if (debouncedContent === lastSavedContentRef.current) return;
+
+    lastSavedContentRef.current = debouncedContent;
+    saveMutation.mutate({
+      path: effectivePath,
+      content: debouncedContent,
+      sha: fileData?.sha,
+      isNew: false,
+      auto: true,
+    });
+    // saveMutation is stable from useMutation; intentionally omitted to avoid
+    // re-running on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    debouncedContent,
+    isNewDraft,
+    mode,
+    draftContent,
+    fileData?.content,
+    fileData?.sha,
+    effectivePath,
+    routeOwner,
+    hasPendingConflict,
+  ]);
 
   const currentServerContent = fileData?.content ?? "";
   const hasUnsavedChanges = isNewDraft
@@ -636,6 +758,15 @@ export function MarkdownEditor({
               </>
             )}
           </Button>
+          {!isNewDraft && (
+            <span className="mr-1 text-xs text-muted-foreground" aria-live="polite">
+              {saveMutation.isPending
+                ? "Saving…"
+                : hasUnsavedChanges
+                  ? "Unsaved changes"
+                  : "Saved"}
+            </span>
+          )}
           <Button
             size="sm"
             onClick={handleSave}

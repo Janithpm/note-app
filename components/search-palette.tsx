@@ -31,7 +31,9 @@ import { useDebouncedValue } from "@/lib/use-debounced-value";
 import {
   getBaseName,
   getParentPath,
+  getWorkspaceFilesFromCache,
   getWorkspaceTreeItemsFromCache,
+  useWorkspaceCodeSearchQuery,
   useWorkspaceTreeIndexQuery,
 } from "@/lib/workspace-query";
 import {
@@ -41,6 +43,13 @@ import {
   treeItemsToSearchable,
   type SearchableItem,
 } from "@/lib/workspace-search";
+import {
+  mergeContentMatches,
+  searchCachedContent,
+  type ContentMatch,
+} from "@/lib/workspace-content-search";
+import { useContentPrefetch } from "@/lib/use-content-prefetch";
+import { useOfflineSync } from "@/components/offline-sync-provider";
 import { getWorkspaceSettingsPath } from "@/lib/workspace";
 import { cn } from "@/lib/utils";
 
@@ -51,6 +60,29 @@ type Command = {
   icon: React.ComponentType<{ className?: string }>;
   run: () => void;
 };
+
+/**
+ * Renders a content-match snippet, bolding the matched term. Local matches carry
+ * exact offsets (matchStart >= 0); remote matches show the raw fragment as-is.
+ */
+function renderSnippet(match: ContentMatch): React.ReactNode {
+  if (match.matchStart < 0 || match.matchLength <= 0) {
+    return match.snippet;
+  }
+  const before = match.snippet.slice(0, match.matchStart);
+  const hit = match.snippet.slice(
+    match.matchStart,
+    match.matchStart + match.matchLength
+  );
+  const after = match.snippet.slice(match.matchStart + match.matchLength);
+  return (
+    <>
+      {before}
+      <mark className="bg-transparent font-semibold text-foreground">{hit}</mark>
+      {after}
+    </>
+  );
+}
 
 export function SearchPalette({ routeOwner }: { routeOwner: string | null }) {
   const { isOpen, options, open, close } = usePalette();
@@ -193,7 +225,52 @@ export function SearchPalette({ routeOwner }: { routeOwner: string | null }) {
   };
 
   const isSearching = Boolean(normalizedQuery);
-  const showSearchingIndicator = isSearching && indexQuery.isFetching;
+
+  // --- Content search (hybrid: local cache + GitHub code search) ---
+  const { status } = useOfflineSync();
+
+  // Background-fill the note-body cache so local content search grows toward
+  // exhaustive (and works offline). Runs while the palette is open + online.
+  useContentPrefetch(routeOwner, indexQuery.data?.entries, isOpen);
+
+  // Local: search bodies already in the cache (instant, offline).
+  const localContentMatches = React.useMemo<ContentMatch[]>(() => {
+    if (!isOpen || !normalizedQuery) return [];
+    const files = getWorkspaceFilesFromCache(queryClient, routeOwner);
+    return searchCachedContent(files, debouncedQuery);
+  }, [isOpen, normalizedQuery, debouncedQuery, queryClient, routeOwner]);
+
+  // Remote: GitHub code search for notes not in the cache (online, 3+ chars).
+  const codeSearchQuery = useWorkspaceCodeSearchQuery(routeOwner, debouncedQuery, {
+    enabled: isOpen && status.isOnline,
+  });
+
+  const remoteContentMatches = React.useMemo<ContentMatch[]>(() => {
+    const items = codeSearchQuery.data ?? [];
+    return items.map((item) => ({
+      path: item.path,
+      name: item.name,
+      snippet: item.fragment ?? "",
+      matchStart: -1,
+      matchLength: 0,
+      score: 180, // just below local content hits (200+)
+      source: "remote" as const,
+    }));
+  }, [codeSearchQuery.data]);
+
+  // Merge + drop any content match whose path already appears as a name/path
+  // result (avoid showing the same note twice).
+  const nameResultPaths = React.useMemo(
+    () => new Set(results.map((item) => item.path)),
+    [results]
+  );
+  const contentResults = React.useMemo(() => {
+    const merged = mergeContentMatches(localContentMatches, remoteContentMatches);
+    return merged.filter((match) => !nameResultPaths.has(match.path));
+  }, [localContentMatches, remoteContentMatches, nameResultPaths]);
+
+  const showSearchingIndicator =
+    isSearching && (indexQuery.isFetching || codeSearchQuery.isFetching);
 
   return (
     <CommandDialog
@@ -282,7 +359,38 @@ export function SearchPalette({ routeOwner }: { routeOwner: string | null }) {
               </CommandGroup>
             ) : null}
 
-            {results.length === 0 && filteredCommands.length === 0 ? (
+            {contentResults.length > 0 ? (
+              <>
+                {results.length > 0 ? <CommandSeparator /> : null}
+                <CommandGroup heading="In notes">
+                  {contentResults.map((match) => (
+                    <CommandItem
+                      key={`content:${match.path}`}
+                      value={`content:${match.path}`}
+                      onSelect={() => runAndClose(() => openNote(match.path))}
+                      className="flex-col items-start gap-0.5"
+                    >
+                      <div className="flex w-full items-center">
+                        <FileText className="mr-2 h-4 w-4 shrink-0 text-primary/80" />
+                        <span className="truncate">{match.name}</span>
+                        <span className="ml-auto truncate pl-3 text-xs text-muted-foreground">
+                          {getParentPath(match.path) || "root"}
+                        </span>
+                      </div>
+                      {match.snippet ? (
+                        <span className="ml-6 line-clamp-1 text-xs text-muted-foreground">
+                          {renderSnippet(match)}
+                        </span>
+                      ) : null}
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              </>
+            ) : null}
+
+            {results.length === 0 &&
+            contentResults.length === 0 &&
+            filteredCommands.length === 0 ? (
               <CommandEmpty>
                 {showSearchingIndicator
                   ? "Searching workspace…"
