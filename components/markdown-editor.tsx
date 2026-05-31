@@ -9,12 +9,12 @@ import {
   Mic,
   RefreshCcw,
   Save,
+  Share2,
   X,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import rehypeSlug from "rehype-slug";
 import remarkGfm from "remark-gfm";
-import GithubSlugger from "github-slugger";
 import { toast } from "sonner";
 
 import { saveNoteAction } from "@/app/workspace/actions";
@@ -22,6 +22,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { queueSaveOffline, isNetworkError } from "@/lib/offline-sync";
 import { useOfflineSync } from "@/components/offline-sync-provider";
 import { useWorkspaceDraft } from "@/components/workspace-draft-provider";
+import { ShareDialog } from "@/components/share-dialog";
 import { Button } from "@/components/ui/button";
 import { NoteLoadingState } from "@/components/note-loading-state";
 import { NoteToc } from "@/components/note-toc";
@@ -39,14 +40,9 @@ import {
 } from "@/lib/workspace-query";
 import { getWorkspaceBlobPath, getWorkspaceNewPath } from "@/lib/workspace";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
+import { extractTOC } from "@/lib/toc";
 
 const AUTOSAVE_DELAY_MS = 1500;
-
-type TocHeading = {
-  id: string;
-  text: string;
-  depth: number;
-};
 
 type SpeechRecognitionResultLike = {
   isFinal: boolean;
@@ -99,32 +95,6 @@ type SaveMutationVariables = {
 };
 
 const NEW_NOTE_TEMPLATE = "# New Note\n\nStart typing here...";
-
-function extractTOC(content: string) {
-  const slugger = new GithubSlugger();
-  const headings: TocHeading[] = [];
-  const lines = content.split("\n");
-
-  const headingRegex = /^(#{1,3})\s+(.+)$/;
-  let inCodeBlock = false;
-
-  for (const line of lines) {
-    if (line.trim().startsWith("```")) {
-      inCodeBlock = !inCodeBlock;
-      continue;
-    }
-    if (inCodeBlock) continue;
-
-    const match = line.match(headingRegex);
-    if (match) {
-      const depth = match[1].length;
-      const text = match[2];
-      const id = slugger.slug(text);
-      headings.push({ id, text, depth });
-    }
-  }
-  return headings;
-}
 
 function processDictation(text: string) {
   const commands: Record<string, string> = {
@@ -223,6 +193,7 @@ export function MarkdownEditor({
     isNew ? NEW_NOTE_TEMPLATE : null
   );
   const [draftPath, setDraftPath] = useState(initialPath);
+  const [shareOpen, setShareOpen] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [interimTranscript, setInterimTranscript] = useState("");
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
@@ -663,15 +634,27 @@ export function MarkdownEditor({
                   />
                 </div>
               </div>
-              <Button
-                onClick={() => setMode("edit")}
-                variant="outline"
-                size="sm"
-                className="hidden sm:flex"
-              >
-                <Edit3 className="mr-2 h-4 w-4" />
-                Edit Note
-              </Button>
+              <div className="flex shrink-0 items-center gap-2">
+                {!isNewDraft && effectivePath ? (
+                  <Button
+                    onClick={() => setShareOpen(true)}
+                    variant="outline"
+                    size="sm"
+                  >
+                    <Share2 className="mr-2 h-4 w-4" />
+                    Share
+                  </Button>
+                ) : null}
+                <Button
+                  onClick={() => setMode("edit")}
+                  variant="outline"
+                  size="sm"
+                  className="hidden sm:flex"
+                >
+                  <Edit3 className="mr-2 h-4 w-4" />
+                  Edit Note
+                </Button>
+              </div>
             </div>
             <div className="prose prose-sm max-w-none text-foreground prose-a:text-primary prose-headings:text-foreground md:prose-base dark:prose-invert">
               <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSlug]}>
@@ -682,6 +665,16 @@ export function MarkdownEditor({
         </div>
 
         <NoteToc headings={toc} />
+
+        {!isNewDraft && effectivePath ? (
+          <ShareDialog
+            routeOwner={routeOwner}
+            path={effectivePath}
+            type="file"
+            open={shareOpen}
+            onOpenChange={setShareOpen}
+          />
+        ) : null}
       </div>
     );
   }

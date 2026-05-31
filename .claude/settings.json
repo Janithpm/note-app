@@ -3,7 +3,8 @@
     "allow": [
       "Bash(pnpm add *)",
       "Bash(npx eslint *)",
-      "Bash(pnpm typecheck *)"
+      "Bash(pnpm typecheck *)",
+      "Bash(pnpm db:migrate)"
     ]
   }
 }

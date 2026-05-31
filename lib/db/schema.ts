@@ -1,4 +1,5 @@
-import { pgTable, text, timestamp, boolean, primaryKey } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { pgTable, text, timestamp, boolean, primaryKey, uniqueIndex } from "drizzle-orm/pg-core";
 
 export const user = pgTable("user", {
 					id: text("id").primaryKey(),
@@ -58,4 +59,27 @@ export const workspaceOwnerCache = pgTable("workspace_owner_cache", {
 					updatedAt: timestamp("updated_at").notNull(),
 			}, (table) => [
 					primaryKey({ columns: [table.userId, table.routeSegment] }),
+			]);
+
+// A read-only public share link to a note (file) or folder (dir) in the owner's
+// private workspace repo. The public viewer fetches content live, server-side,
+// using the owner's stored GitHub token — the token is never exposed and the
+// viewer never authenticates. `routeOwner` is stored alongside `ownerUserId` so
+// the GitHub login can be re-resolved at view time. A partial unique index
+// enforces "one active link per target" while letting revoked rows coexist as
+// history.
+export const shareLink = pgTable("share_link", {
+					id: text("id").primaryKey(),
+					token: text("token").notNull().unique(),
+					ownerUserId: text("owner_user_id").notNull().references(() => user.id),
+					routeOwner: text("route_owner"),
+					targetPath: text("target_path").notNull(),
+					targetType: text("target_type").notNull(),
+					createdAt: timestamp("created_at").notNull(),
+					expiresAt: timestamp("expires_at"),
+					revokedAt: timestamp("revoked_at"),
+			}, (table) => [
+					uniqueIndex("share_link_active_target_idx")
+						.on(table.ownerUserId, table.routeOwner, table.targetPath, table.targetType)
+						.where(sql`${table.revokedAt} is null`),
 			]);

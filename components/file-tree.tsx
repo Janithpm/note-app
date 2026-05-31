@@ -15,6 +15,7 @@ import {
   FolderPlus,
   MoreHorizontal,
   Settings2,
+  Share2,
   Trash2,
 } from "lucide-react";
 
@@ -65,6 +66,7 @@ import {
   SidebarSeparator,
 } from "@/components/ui/sidebar";
 import { WorkspaceSwitcher } from "@/components/workspace-switcher";
+import { ShareDialog } from "@/components/share-dialog";
 import { useWorkspaceDraft } from "@/components/workspace-draft-provider";
 import { useWorkspaceTreeContext } from "@/components/workspace-tree-context";
 import { cn } from "@/lib/utils";
@@ -101,6 +103,7 @@ type FileTreeActionProps = {
   onDelete: (item: WorkspaceTreeItem) => void;
   onCreateInFolder?: (item: WorkspaceTreeItem) => void;
   onCreateFolderInFolder?: (item: WorkspaceTreeItem) => void;
+  onShare?: (item: WorkspaceTreeItem) => void;
 };
 
 type RenameMutationVariables = {
@@ -156,12 +159,14 @@ function ItemActions({
   onDelete,
   onCreateInFolder,
   onCreateFolderInFolder,
+  onShare,
 }: {
   item: WorkspaceTreeItem;
   onRename: (item: WorkspaceTreeItem) => void;
   onDelete: (item: WorkspaceTreeItem) => void;
   onCreateInFolder?: (item: WorkspaceTreeItem) => void;
   onCreateFolderInFolder?: (item: WorkspaceTreeItem) => void;
+  onShare?: (item: WorkspaceTreeItem) => void;
 }) {
   const isDir = item.type === "dir";
 
@@ -202,6 +207,12 @@ function ItemActions({
             <Edit2 className="mr-2 h-4 w-4" />
             Rename
           </DropdownMenuItem>
+          {onShare ? (
+            <DropdownMenuItem onClick={() => onShare(item)}>
+              <Share2 className="mr-2 h-4 w-4" />
+              Share
+            </DropdownMenuItem>
+          ) : null}
           <DropdownMenuItem
             onClick={() => onDelete(item)}
             className="text-destructive focus:text-destructive"
@@ -222,6 +233,7 @@ const FileLink = React.memo(function FileLink({
   depth = 0,
   onRename,
   onDelete,
+  onShare,
 }: {
   routeOwner: string | null;
   item: WorkspaceTreeItem;
@@ -301,7 +313,12 @@ const FileLink = React.memo(function FileLink({
           <span>{item.name}</span>
         </Link>
       </SidebarMenuButton>
-      <ItemActions item={item} onRename={onRename} onDelete={onDelete} />
+      <ItemActions
+        item={item}
+        onRename={onRename}
+        onDelete={onDelete}
+        onShare={onShare}
+      />
     </SidebarMenuItem>
   );
 });
@@ -315,6 +332,7 @@ const FolderNode = React.memo(function FolderNode({
   onDelete,
   onCreateInFolder,
   onCreateFolderInFolder,
+  onShare,
 }: {
   routeOwner: string | null;
   item: WorkspaceTreeItem;
@@ -402,6 +420,7 @@ const FolderNode = React.memo(function FolderNode({
             onDelete={onDelete}
             onCreateInFolder={onCreateInFolder}
             onCreateFolderInFolder={onCreateFolderInFolder}
+            onShare={onShare}
           />
         ))
       )}
@@ -418,6 +437,7 @@ const FolderNode = React.memo(function FolderNode({
           onDelete={onDelete}
           onCreateInFolder={onCreateInFolder}
           onCreateFolderInFolder={onCreateFolderInFolder}
+          onShare={onShare}
         />
         <CollapsibleContent>{content}</CollapsibleContent>
       </Collapsible>
@@ -434,6 +454,7 @@ const FileNode = React.memo(function FileNode({
   onDelete,
   onCreateInFolder,
   onCreateFolderInFolder,
+  onShare,
 }: {
   routeOwner: string | null;
   item: WorkspaceTreeItem;
@@ -451,6 +472,7 @@ const FileNode = React.memo(function FileNode({
         onDelete={onDelete}
         onCreateInFolder={onCreateInFolder}
         onCreateFolderInFolder={onCreateFolderInFolder}
+        onShare={onShare}
       />
     );
   }
@@ -464,6 +486,7 @@ const FileNode = React.memo(function FileNode({
       onRename={onRename}
       onDelete={onDelete}
       onCreateFolderInFolder={onCreateFolderInFolder}
+      onShare={onShare}
     />
   );
 });
@@ -494,6 +517,7 @@ export function FileTree({
   const [folderDialogOpen, setFolderDialogOpen] = React.useState(false);
   const [folderParentPath, setFolderParentPath] = React.useState<string | null>(null);
   const [folderName, setFolderName] = React.useState("");
+  const [shareTarget, setShareTarget] = React.useState<WorkspaceTreeItem | null>(null);
 
   const renameMutation = useOptimisticMutation<
     { oldPath: string; newPath: string },
@@ -769,6 +793,10 @@ export function FileTree({
     setNewName(item.name);
   }, []);
 
+  const handleShare = React.useCallback((item: WorkspaceTreeItem) => {
+    setShareTarget(item);
+  }, []);
+
   const handleRenameSubmit = () => {
     if (!itemToRename || !newName || newName === itemToRename.name) {
       setItemToRename(null);
@@ -877,6 +905,7 @@ export function FileTree({
                       onDelete={setItemToDelete}
                       onCreateInFolder={handleCreateInFolder}
                       onCreateFolderInFolder={handleCreateFolderInFolder}
+                      onShare={handleShare}
                     />
                   ))
                 )}
@@ -1014,6 +1043,16 @@ export function FileTree({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {shareTarget ? (
+        <ShareDialog
+          routeOwner={routeOwner}
+          path={shareTarget.path}
+          type={shareTarget.type === "dir" ? "dir" : "file"}
+          open={Boolean(shareTarget)}
+          onOpenChange={(open) => !open && setShareTarget(null)}
+        />
+      ) : null}
     </>
   );
 }
