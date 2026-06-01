@@ -15,6 +15,12 @@ import {
   type WorkspaceCodeSearchResult,
 } from "@/app/workspace/actions";
 import {
+  getBaseName,
+  getParentPath,
+  isPathOrDescendant,
+  remapPathPrefix,
+} from "@/lib/path-utils";
+import {
   PERSONAL_WORKSPACE_SEGMENT,
   type WorkspaceOwnerOption,
   type WorkspacePersistenceMode,
@@ -132,31 +138,9 @@ export function sortWorkspaceTreeItems(items: WorkspaceTreeItem[]) {
   });
 }
 
-export function getParentPath(path: string) {
-  const parts = path.split("/");
-  parts.pop();
-  return parts.join("/");
-}
-
-export function getBaseName(path: string) {
-  return path.split("/").filter(Boolean).pop() ?? path;
-}
-
-export function isPathOrDescendant(path: string, prefix: string) {
-  return path === prefix || path.startsWith(`${prefix}/`);
-}
-
-export function remapPathPrefix(path: string, oldPrefix: string, newPrefix: string) {
-  if (!isPathOrDescendant(path, oldPrefix)) {
-    return path;
-  }
-
-  if (path === oldPrefix) {
-    return newPrefix;
-  }
-
-  return `${newPrefix}${path.slice(oldPrefix.length)}`;
-}
+// Pure path helpers now live in `lib/path-utils.ts` (so `server-only` modules can
+// reuse them); re-exported here to keep existing import sites working.
+export { getParentPath, getBaseName, isPathOrDescendant, remapPathPrefix };
 
 function remapTreeItemPath(
   item: WorkspaceTreeItem,

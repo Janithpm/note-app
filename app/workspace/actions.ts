@@ -5,6 +5,8 @@ import { headers } from "next/headers";
 
 import { auth } from "@/lib/auth";
 import {
+  copyDirectory,
+  copyFileContent,
   createDirectory,
   deleteDirectory,
   deleteFileContent,
@@ -17,6 +19,8 @@ import {
   renameFileContent,
   saveFileContent,
 } from "@/lib/github";
+import { getBaseName, getParentPath, isPathOrDescendant } from "@/lib/path-utils";
+import { migrateSharePathsForMove } from "@/lib/share";
 import {
   updateWorkspacePersistenceMode,
   persistWorkspaceVisit,
@@ -363,6 +367,192 @@ export async function renameDirectoryAction(
     oldPath,
     newPath,
   };
+}
+
+/**
+ * Validates a move/copy request and returns the computed destination path.
+ * `destParentPath` is the folder being dropped onto ("" = workspace root). The
+ * destination path is derived server-side from the source basename rather than
+ * trusting a client-sent value.
+ */
+function resolveMoveOrCopyDest(
+  sourcePath: string,
+  destParentPath: string,
+  isDir: boolean
+): string {
+  const baseName = getBaseName(sourcePath);
+  const destPath = destParentPath ? `${destParentPath}/${baseName}` : baseName;
+
+  if (getParentPath(sourcePath) === destParentPath) {
+    throw new Error("Item is already here.");
+  }
+
+  if (
+    isDir &&
+    (destParentPath === sourcePath || isPathOrDescendant(destParentPath, sourcePath))
+  ) {
+    throw new Error("Cannot move a folder into itself.");
+  }
+
+  return destPath;
+}
+
+/**
+ * Validates a copy/duplicate request against an explicit destination path. Unlike
+ * a move, a duplicate intentionally lands in the same parent (different basename),
+ * so there is no no-op guard — only the self/descendant guard for directories.
+ */
+function resolveCopyDest(sourcePath: string, destPath: string, isDir: boolean) {
+  if (
+    isDir &&
+    (destPath === sourcePath || isPathOrDescendant(destPath, sourcePath))
+  ) {
+    throw new Error("Cannot copy a folder into itself.");
+  }
+}
+
+/**
+ * Rejects the operation when an item with the same name already exists in the
+ * destination folder. Defense in depth on top of the client's cache check — closes
+ * the race where the local tree is stale. A 404 means the parent is new/empty.
+ */
+async function assertNoCollision(
+  userId: string,
+  login: string,
+  destParentPath: string,
+  baseName: string
+) {
+  try {
+    const contents = await getRepositoryContents(
+      userId,
+      login,
+      WORKSPACE_REPO_NAME,
+      destParentPath
+    );
+    if (
+      Array.isArray(contents) &&
+      contents.some((entry) => (entry as { name?: string }).name === baseName)
+    ) {
+      throw new Error("An item with that name already exists here.");
+    }
+  } catch (error) {
+    if ((error as { status?: number })?.status === 404) {
+      return;
+    }
+    throw error;
+  }
+}
+
+export async function moveFileAction(
+  routeOwner: string | null,
+  sourcePath: string,
+  destParentPath: string,
+  sha: string,
+  message: string
+) {
+  const userId = await getSessionUserId();
+  const login = await getOwnerLogin(userId, routeOwner);
+
+  const destPath = resolveMoveOrCopyDest(sourcePath, destParentPath, false);
+  await assertNoCollision(userId, login, destParentPath, getBaseName(sourcePath));
+
+  await renameFileContent(
+    userId,
+    login,
+    WORKSPACE_REPO_NAME,
+    sourcePath,
+    destPath,
+    message,
+    sha
+  );
+  await migrateSharePathsForMove(userId, routeOwner, sourcePath, destPath, "file");
+
+  return { oldPath: sourcePath, newPath: destPath };
+}
+
+export async function moveDirectoryAction(
+  routeOwner: string | null,
+  sourcePath: string,
+  destParentPath: string,
+  message: string
+) {
+  const userId = await getSessionUserId();
+  const login = await getOwnerLogin(userId, routeOwner);
+
+  const destPath = resolveMoveOrCopyDest(sourcePath, destParentPath, true);
+  await assertNoCollision(userId, login, destParentPath, getBaseName(sourcePath));
+
+  await renameDirectory(
+    userId,
+    login,
+    WORKSPACE_REPO_NAME,
+    sourcePath,
+    destPath,
+    message
+  );
+  await migrateSharePathsForMove(userId, routeOwner, sourcePath, destPath, "dir");
+
+  return { oldPath: sourcePath, newPath: destPath };
+}
+
+export async function copyFileAction(
+  routeOwner: string | null,
+  sourcePath: string,
+  destPath: string,
+  message: string
+) {
+  const userId = await getSessionUserId();
+  const login = await getOwnerLogin(userId, routeOwner);
+
+  resolveCopyDest(sourcePath, destPath, false);
+  await assertNoCollision(
+    userId,
+    login,
+    getParentPath(destPath),
+    getBaseName(destPath)
+  );
+
+  const result = await copyFileContent(
+    userId,
+    login,
+    WORKSPACE_REPO_NAME,
+    sourcePath,
+    destPath,
+    message
+  );
+
+  // No share migration: the copy is private.
+  return { sourcePath, newPath: destPath, sha: result.sha };
+}
+
+export async function copyDirectoryAction(
+  routeOwner: string | null,
+  sourcePath: string,
+  destPath: string,
+  message: string
+) {
+  const userId = await getSessionUserId();
+  const login = await getOwnerLogin(userId, routeOwner);
+
+  resolveCopyDest(sourcePath, destPath, true);
+  await assertNoCollision(
+    userId,
+    login,
+    getParentPath(destPath),
+    getBaseName(destPath)
+  );
+
+  await copyDirectory(
+    userId,
+    login,
+    WORKSPACE_REPO_NAME,
+    sourcePath,
+    destPath,
+    message
+  );
+
+  // No share migration: the copy is private.
+  return { sourcePath, newPath: destPath };
 }
 
 export async function rememberWorkspaceVisitAction(routeOwner: string | null) {

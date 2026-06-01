@@ -414,6 +414,118 @@ export async function renameFileContent(
   return deleteFileContent(userId, owner, repo, oldPath, message, sha);
 }
 
+export async function copyFileContent(
+  userId: string,
+  owner: string,
+  repo: string,
+  sourcePath: string,
+  destPath: string,
+  message: string
+): Promise<{ path: string; sha: string }> {
+  const fileData = await getFileContent(userId, owner, repo, sourcePath);
+  const result = await saveFileContent(
+    userId,
+    owner,
+    repo,
+    destPath,
+    fileData.content,
+    message
+  );
+  return {
+    path: result.content?.path ?? destPath,
+    sha: result.content?.sha ?? "",
+  };
+}
+
+/**
+ * Copies a directory (and everything under it) to a new path in a single atomic
+ * commit. Mirrors {@link renameDirectory}, but only adds the destination blobs —
+ * it omits the `sha: null` tombstones that a rename uses to delete the source, so
+ * the source is left in place. Existing blob SHAs are reused, so even a large
+ * folder is one tree + commit + ref update with no blob re-upload.
+ */
+export async function copyDirectory(
+  userId: string,
+  owner: string,
+  repo: string,
+  sourcePath: string,
+  destPath: string,
+  message: string
+) {
+  const octokit = await getOctokit(userId);
+
+  const { data: repoInfo } = await octokit.rest.repos.get({ owner, repo });
+  const branchName = repoInfo.default_branch;
+
+  const { data: branch } = await octokit.rest.repos.getBranch({
+    owner,
+    repo,
+    branch: branchName,
+  });
+  const latestCommitSha = branch.commit.sha;
+
+  const { data: commit } = await octokit.rest.git.getCommit({
+    owner,
+    repo,
+    commit_sha: latestCommitSha,
+  });
+  const baseTreeSha = commit.tree.sha;
+
+  const { data: treeData } = await octokit.rest.git.getTree({
+    owner,
+    repo,
+    tree_sha: baseTreeSha,
+    recursive: "true",
+  });
+
+  // A truncated tree would silently drop files from the copy; fail loudly instead.
+  if (treeData.truncated) {
+    throw new Error("Folder is too large to copy reliably.");
+  }
+
+  const newTree: GitTreeEntry[] = [];
+  const sourcePrefix = sourcePath + "/";
+  for (const item of treeData.tree) {
+    if (item.type === "blob") {
+      if (item.path?.startsWith(sourcePrefix) || item.path === sourcePath) {
+        const relativePath = item.path.substring(sourcePath.length);
+        newTree.push({
+          path: destPath + relativePath,
+          mode: item.mode as GitTreeEntry["mode"],
+          type: item.type,
+          sha: item.sha,
+        });
+      }
+    }
+  }
+
+  if (newTree.length === 0) {
+    throw new Error("No files found to copy");
+  }
+
+  const { data: newTreeData } = await octokit.rest.git.createTree({
+    owner,
+    repo,
+    base_tree: baseTreeSha,
+    tree: newTree,
+  });
+
+  const { data: newCommit } = await octokit.rest.git.createCommit({
+    owner,
+    repo,
+    message,
+    tree: newTreeData.sha,
+    parents: [latestCommitSha],
+  });
+
+  await octokit.rest.git.updateRef({
+    owner,
+    repo,
+    ref: `heads/${branchName}`,
+    sha: newCommit.sha,
+  });
+}
+
 export async function renameDirectory(
   userId: string,
   owner: string,
@@ -447,6 +559,11 @@ export async function renameDirectory(
     tree_sha: baseTreeSha,
     recursive: "true",
   });
+
+  // A truncated tree would silently drop files from the rename; fail loudly.
+  if (treeData.truncated) {
+    throw new Error("Folder is too large to rename reliably.");
+  }
 
   const newTree: GitTreeEntry[] = [];
   const oldPrefix = oldPath + "/";

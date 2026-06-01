@@ -10,6 +10,7 @@ import {
   getOwnerLogin,
   getRepositoryContents,
 } from "@/lib/github";
+import { isPathOrDescendant, remapPathPrefix } from "@/lib/path-utils";
 import { WORKSPACE_REPO_NAME } from "@/lib/workspace";
 import { filterVisibleWorkspaceTreeItems } from "@/lib/workspace-tree";
 import { type ShareExpiry, type ShareTargetType } from "@/lib/share-types";
@@ -171,6 +172,89 @@ export async function revokeShare(
     )
     .returning({ id: shareLink.id });
   return result.length > 0;
+}
+
+/**
+ * Repoints active share links when their target is moved, so existing links keep
+ * working at the new location. For a file move only the exact row migrates; for a
+ * directory move the folder's own share plus every descendant share (file or
+ * sub-folder) migrate.
+ *
+ * Runs in one transaction. The partial unique index "one active link per target"
+ * would be violated if a dangling active row already sits at a destination path,
+ * so those are soft-revoked first (a move means the old item is gone from that
+ * spot; any active share pointing there was stale).
+ *
+ * Scoped to (ownerUserId, routeOwner). Copy never calls this — the copy is private.
+ */
+export async function migrateSharePathsForMove(
+  ownerUserId: string,
+  routeOwner: string | null,
+  sourcePath: string,
+  destPath: string,
+  targetType: ShareTargetType,
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    const ownerMatch = and(
+      eq(shareLink.ownerUserId, ownerUserId),
+      sql`${shareLink.routeOwner} is not distinct from ${routeOwner}`,
+      isNull(shareLink.revokedAt),
+    );
+
+    // Load active rows to migrate. For a dir, fetch the exact row plus prefix
+    // candidates, then filter in JS with isPathOrDescendant so LIKE wildcard
+    // characters in folder names can't over-/under-match.
+    const candidates = await tx
+      .select()
+      .from(shareLink)
+      .where(
+        targetType === "dir"
+          ? and(
+              ownerMatch,
+              sql`(${shareLink.targetPath} = ${sourcePath} or ${shareLink.targetPath} like ${sourcePath + "/%"})`,
+            )
+          : and(ownerMatch, eq(shareLink.targetPath, sourcePath)),
+      );
+
+    const rows =
+      targetType === "dir"
+        ? candidates.filter((row) => isPathOrDescendant(row.targetPath, sourcePath))
+        : candidates;
+
+    if (rows.length === 0) return;
+
+    const moves = rows.map((row) => ({
+      id: row.id,
+      newPath: remapPathPrefix(row.targetPath, sourcePath, destPath),
+      targetType: row.targetType,
+    }));
+
+    const now = new Date();
+
+    // Clear any dangling active rows already sitting at a destination path so the
+    // repoint below can't collide with the partial unique index.
+    for (const move of moves) {
+      await tx
+        .update(shareLink)
+        .set({ revokedAt: now })
+        .where(
+          and(
+            eq(shareLink.ownerUserId, ownerUserId),
+            sql`${shareLink.routeOwner} is not distinct from ${routeOwner}`,
+            isNull(shareLink.revokedAt),
+            eq(shareLink.targetPath, move.newPath),
+            eq(shareLink.targetType, move.targetType),
+          ),
+        );
+    }
+
+    for (const move of moves) {
+      await tx
+        .update(shareLink)
+        .set({ targetPath: move.newPath })
+        .where(eq(shareLink.id, move.id));
+    }
+  });
 }
 
 async function findShareByToken(token: string): Promise<ShareRecord | null> {
